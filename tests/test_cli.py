@@ -237,3 +237,94 @@ def test_search_refuses_an_index_from_another_model(cached_crashcause: Path, mon
 
     assert result.exit_code == 1
     assert "rebuild it" in result.output
+
+
+EVAL_QUESTIONS = """
+questions:
+  - id: runasnonroot
+    question: "Which cause code did a runAsNonRoot pod with a root image get?"
+    kind: factual
+    expected:
+      - url: https://github.com/ryckakas/crashcause/issues/17
+    answer: "image_pull_other"
+  - id: missing-source
+    question: "What did PR 999 change?"
+    kind: factual
+    expected:
+      - url: https://github.com/ryckakas/crashcause/pull/999
+    answer: "Nothing; it doesn't exist."
+  - id: kafka
+    question: "Which repo uses Kafka?"
+    kind: unanswerable
+    answer: "None."
+  - id: held-out
+    question: "What does the engine classify?"
+    kind: commit-only
+    expected:
+      - url: https://github.com/ryckakas/crashcause/commit/69531a3aa08bf8d47f1428261efc3038537127b6
+    answer: "Crashes."
+    holdout: true
+"""
+
+
+@pytest.fixture
+def eval_questions(cached_crashcause: Path) -> Path:
+    path = cached_crashcause / "questions.yaml"
+    path.write_text(EVAL_QUESTIONS, encoding="utf-8")
+    runner.invoke(app, ["build"])
+    return path
+
+
+def test_eval_scores_saves_and_lists_misses(eval_questions: Path, cached_crashcause: Path) -> None:
+    result = runner.invoke(app, ["eval", "--file", str(eval_questions), "--show-misses"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert lines[0] == "3 tuning questions on index default (fake-bag-of-words)"
+    assert lines[1] == "  not in the index: https://github.com/ryckakas/crashcause/pull/999"
+    assert lines[3].split() == ["recall@5", "0.500"]
+    assert "  factual       0.500  (2)" in lines
+    assert any(line.startswith("top score: ") for line in lines)
+    assert "miss: missing-source: What did PR 999 change?" in result.output
+    assert "  expected https://github.com/ryckakas/crashcause/pull/999 (rank >10)" in lines
+    assert len(list((cached_crashcause / "evals" / "runs").glob("*.json"))) == 1
+
+
+def test_second_eval_compares_with_the_previous_run(eval_questions: Path) -> None:
+    runner.invoke(app, ["eval", "--file", str(eval_questions)])
+
+    result = runner.invoke(app, ["eval", "--file", str(eval_questions)])
+
+    assert next(line for line in result.output.splitlines() if line.startswith("recall@5")).split() == [
+        "recall@5",
+        "0.500",
+        "0.5",
+        "+0.000",
+    ]
+
+
+def test_eval_on_the_holdout_set(eval_questions: Path) -> None:
+    result = runner.invoke(app, ["eval", "--file", str(eval_questions), "--holdout"])
+
+    assert result.exit_code == 0
+    assert result.output.startswith("1 held-out questions on index default")
+    assert "top score" not in result.output
+
+
+def test_eval_without_an_index_says_to_build(cached_crashcause: Path) -> None:
+    path = cached_crashcause / "questions.yaml"
+    path.write_text(EVAL_QUESTIONS, encoding="utf-8")
+
+    result = runner.invoke(app, ["eval", "--file", str(path)])
+
+    assert result.exit_code == 1
+    assert "run `repolore build` first" in result.output
+
+
+def test_eval_refuses_an_index_from_another_model(eval_questions: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(FakeEmbedder, "model_id", "other-model")
+
+    result = runner.invoke(app, ["eval", "--file", str(eval_questions)])
+
+    assert result.exit_code == 1
+    assert "rebuild it" in result.output

@@ -1,3 +1,4 @@
+import hashlib
 import io
 import logging
 import random
@@ -17,13 +18,15 @@ from repolore.chunking import MAX_TOKENS, Chunk, chunk_document
 from repolore.config import Config, load_config
 from repolore.documents import Document, DocumentKind
 from repolore.embedding.local import LocalEmbedder
-from repolore.evals.questions import QuestionKind, load_questions
+from repolore.evals.harness import METRICS, SEARCH_DEPTH, QuestionResult, evaluate, mean_top_score, recall_by_kind
+from repolore.evals.questions import QuestionKind, QuestionSet, load_questions
+from repolore.evals.runs import previous_run, run_record, save_run
 from repolore.indexing import build_index
 from repolore.ingest import ingest as ingest_repos
 from repolore.paths import AppPaths, resolve_paths
 from repolore.retrieval import search as search_index
 from repolore.sources.github import GitHubClient, GitHubError, resolve_token
-from repolore.store import EmbeddingCache, Filters, StoreError, connect
+from repolore.store import EmbeddingCache, Filters, StoreError, connect, index_model, indexed_urls
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -64,15 +67,7 @@ def questions(
     """Validate the eval question set and print how it is made up."""
     paths: AppPaths = ctx.obj
     path = file or paths.questions_file
-    try:
-        question_set = load_questions(path)
-    except FileNotFoundError:
-        typer.echo(f"No question file at {path}. Start from evals/questions.example.yaml.", err=True)
-        raise typer.Exit(1) from None
-    except (yaml.YAMLError, ValidationError) as error:
-        typer.echo(f"{path} is invalid:\n{error}", err=True)
-        raise typer.Exit(1) from None
-
+    question_set = _questions_or_exit(path)
     kinds = Counter(q.kind for q in question_set.questions)
     held_out = sum(q.holdout for q in question_set.questions)
     typer.echo(f"questions: {path}")
@@ -202,10 +197,7 @@ def search(
 ) -> None:
     """Find the chunks closest in meaning to the query."""
     paths: AppPaths = ctx.obj
-    index_file = paths.index_file(db)
-    if not index_file.exists():
-        typer.echo(f"No index at {index_file}; run `repolore build` first.", err=True)
-        raise typer.Exit(1)
+    index_file = _index_or_exit(paths, db)
     filters = Filters(repo=repo, kind=kind, author=author)
     try:
         with closing(connect(index_file)) as index:
@@ -218,3 +210,99 @@ def search(
     for rank, hit in enumerate(hits, start=1):
         snippet = " ".join(hit.text.split())[:SNIPPET_CHARS]
         typer.echo(f"{rank}. {hit.score:.3f}  {hit.header}\n   {hit.url}\n   {snippet}\n")
+
+
+MISS_DEPTH = 5
+MISS_HITS = 3
+
+
+@app.command("eval")
+def eval_(
+    ctx: typer.Context,
+    db: IndexOption = DEFAULT_INDEX,
+    holdout: Annotated[bool, typer.Option(help="Score the held-out questions instead of the tuning set.")] = False,
+    show_misses: Annotated[bool, typer.Option(help="List questions whose sources aren't all in the top 5.")] = False,
+    file: Annotated[
+        Path | None, typer.Option(help="Question file to use instead of the one in the config dir.")
+    ] = None,
+) -> None:
+    """Score retrieval on the eval questions, save the run and compare it with the previous one."""
+    paths: AppPaths = ctx.obj
+    questions_file = file or paths.questions_file
+    question_set = _questions_or_exit(questions_file)
+    questions = [question for question in question_set.questions if question.holdout is holdout]
+    index_file = _index_or_exit(paths, db)
+    embedder = LocalEmbedder()
+    try:
+        with closing(connect(index_file)) as index:
+            model_id, _ = index_model(index)
+            missing = {source.url for q in questions for source in q.expected} - indexed_urls(index)
+            results = evaluate(questions, lambda text: search_index(index, embedder, text, SEARCH_DEPTH, Filters()))
+    except StoreError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    fingerprint = f"{hashlib.sha256(questions_file.read_bytes()).hexdigest()[:12]}:{'holdout' if holdout else 'tuning'}"
+    config = {
+        "index": db,
+        "model_id": model_id,
+        "max_tokens": MAX_TOKENS,
+        "retrieval": "vector",
+        "k": SEARCH_DEPTH,
+        "questions": fingerprint,
+    }
+    runs_dir = paths.data_dir / "evals" / "runs"
+    previous = previous_run(runs_dir, fingerprint)
+    run = run_record(config, results)
+    typer.echo(f"{len(questions)} {'held-out' if holdout else 'tuning'} questions on index {db} ({model_id})")
+    for url in sorted(missing):
+        typer.echo(f"  not in the index: {url}")
+    _print_metrics(run["metrics"], previous["metrics"] if previous else None)
+    _print_breakdown(results)
+    if show_misses:
+        _print_misses(results)
+    typer.echo(f"run saved to {save_run(runs_dir, run)}")
+
+
+def _questions_or_exit(path: Path) -> QuestionSet:
+    try:
+        return load_questions(path)
+    except FileNotFoundError:
+        typer.echo(f"No question file at {path}. Start from evals/questions.example.yaml.", err=True)
+    except (yaml.YAMLError, ValidationError) as error:
+        typer.echo(f"{path} is invalid:\n{error}", err=True)
+    raise typer.Exit(1)
+
+
+def _index_or_exit(paths: AppPaths, db: str) -> Path:
+    index_file = paths.index_file(db)
+    if not index_file.exists():
+        typer.echo(f"No index at {index_file}; run `repolore build` first.", err=True)
+        raise typer.Exit(1)
+    return index_file
+
+
+def _print_metrics(metrics: dict[str, float], previous: dict[str, float] | None) -> None:
+    typer.echo(f"{'':<10} {'this run':>9} {'previous':>9} {'change':>8}")
+    for name in METRICS:
+        value = metrics.get(name, 0.0)
+        before = previous.get(name) if previous else None
+        change = f"{value - before:+8.3f}" if before is not None else f"{'':>8}"
+        typer.echo(f"{name:<10} {value:9.3f} {before if before is not None else '':>9} {change}".rstrip())
+
+
+def _print_breakdown(results: list[QuestionResult]) -> None:
+    typer.echo("recall@5 by kind")
+    for kind, (recall, count) in sorted(recall_by_kind(results).items()):
+        typer.echo(f"  {kind:<13} {recall:.3f}  ({count})")
+    answerable, unanswerable = mean_top_score(results, True), mean_top_score(results, False)
+    if answerable is not None and unanswerable is not None:
+        typer.echo(f"top score: {answerable:.3f} on answerable, {unanswerable:.3f} on unanswerable questions")
+
+
+def _print_misses(results: list[QuestionResult]) -> None:
+    for result in (result for result in results if result.missed):
+        typer.echo(f"\nmiss: {result.question.id}: {result.question.question}")
+        for source, rank in zip(result.question.expected, result.ranks, strict=True):
+            typer.echo(f"  expected {source.url} (rank {rank or f'>{SEARCH_DEPTH}'})")
+        for hit in result.hits[:MISS_HITS]:
+            typer.echo(f"  got      {hit.url} ({hit.score:.3f}, {hit.section or '-'})")
