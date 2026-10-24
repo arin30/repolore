@@ -1,0 +1,136 @@
+{
+ "number": 854,
+ "title": "remove v-html",
+ "body": "Hier wird auch v-html verwendet. Links auf zB Sicherungen sollten trotzdem korrekt angezeigt werden.\r\n#853 ",
+ "url": "https://github.com/openWB/openwb-ui-settings/pull/854",
+ "state": "CLOSED",
+ "createdAt": "2025-11-24T11:22:48Z",
+ "author": {
+  "login": "LKuemmel",
+  "__typename": "User"
+ },
+ "files": {
+  "totalCount": 1,
+  "nodes": [
+   {
+    "path": "src/components/OpenwbPageMessages.vue"
+   }
+  ]
+ },
+ "commits": {
+  "totalCount": 1,
+  "nodes": [
+   {
+    "commit": {
+     "messageHeadline": "remove v-html",
+     "messageBody": ""
+    }
+   }
+  ]
+ },
+ "comments": {
+  "totalCount": 3,
+  "nodes": [
+   {
+    "author": {
+     "login": "benderl",
+     "__typename": "User"
+    },
+    "body": "Vom Grudsatz her hast Du Recht. Das Parsen der erlaubten Tags ist jedoch etwas komplizierter, daher bin ich das noch nicht angegangen.\r\n\r\nDie hier umgesetzte Variante hat ein paar Probleme, da die originalen HTML Tags zweimal umgewandelt werden. Zuerst in Text und dann wieder in gültige Tags mit reduzierten Attributen. Wäre es nicht sinnvoller, eine Liste mit erlaubten Tags zu erstellen und bei jeden Tag die erlaubten Attribute aufzulisten?\r\n\r\nVorgehen wäre dann:\r\n- auf nicht erlaubte Tags zu prüfen und diese in reinen Text umwandeln\r\n- bei erlaubten Tags auf nicht erlaubte Attribute zu prüfen und diese zu entfernen.\r\n\r\nDann ist sichergestellt, dass die Attribute auch so erhalten bleiben, wie es ursprünglich gedacht war.",
+    "createdAt": "2025-11-25T09:15:02Z"
+   },
+   {
+    "author": {
+     "login": "benderl",
+     "__typename": "User"
+    },
+    "body": "Eine mögliche Variante: https://github.com/LeSuisse/vue-dompurify-html/tree/main/packages/vue-dompurify-html",
+    "createdAt": "2026-04-17T07:45:26Z"
+   },
+   {
+    "author": {
+     "login": "benderl",
+     "__typename": "User"
+    },
+    "body": "replaced by #1120 ",
+    "createdAt": "2026-10-08T10:35:18Z"
+   }
+  ]
+ },
+ "reviews": {
+  "totalCount": 3,
+  "nodes": [
+   {
+    "author": {
+     "login": "benderl",
+     "__typename": "User"
+    },
+    "body": "",
+    "createdAt": "2025-11-25T09:19:33Z"
+   },
+   {
+    "author": {
+     "login": "ryckakas",
+     "__typename": "User"
+    },
+    "body": "",
+    "createdAt": "2026-09-16T18:53:01Z"
+   },
+   {
+    "author": {
+     "login": "benderl",
+     "__typename": "User"
+    },
+    "body": "",
+    "createdAt": "2026-09-21T07:13:06Z"
+   }
+  ]
+ },
+ "reviewThreads": {
+  "totalCount": 1,
+  "nodes": [
+   {
+    "isResolved": false,
+    "isOutdated": false,
+    "path": "src/components/OpenwbPageMessages.vue",
+    "line": 185,
+    "originalLine": 185,
+    "comments": {
+     "totalCount": 3,
+     "nodes": [
+      {
+       "author": {
+        "login": "benderl",
+        "__typename": "User"
+       },
+       "body": "Hier könnte eine Liste mit gültigen Tags und Attributen definiert werden.\n```\nconst validTags = [\n  { name: \"br\", validAttributes: [] },\n  { name: \"a\", validAttributes: [\"href\", \"target\"] },\n  ...\n];\n```",
+       "createdAt": "2025-11-25T09:19:33Z",
+       "url": "https://github.com/openWB/openwb-ui-settings/pull/854#discussion_r2559214022",
+       "diffHunk": "@@ -179,6 +179,32 @@ export default {\n         this.hiddenMessages.push(event.topic);\n       }\n     },\n+    /**\n+     * Sanitize HTML message to allow only safe tags like links and line breaks\n+     */\n+    sanitizeMessage(message) {"
+      },
+      {
+       "author": {
+        "login": "ryckakas",
+        "__typename": "User"
+       },
+       "body": "Warum verwendest du hier eine eigene sanitizeMessage-Logik? Ich würde dringend empfehlen, stattdessen eine battle-tested Library wie [DOMPurify](https://github.com/cure53/dompurify) zu nutzen, das übernimmt auch das parsen von tags, und es ist komplett konfigurierbar. Selber geschriebene Sanitization-Logik bleibt meistens fragil. Wer pflegt das langfristig, wenn neue Sicherheitslücken oder Bypass-Techniken bekannt werden?\r\n\r\nVorschlag / Best Practice für Vue:\r\nAm besten kapselt man das in einer eigenen Komponente (z. B. <SafeHtml :content=\"userContent\"/>).\r\n```vue\r\n<!-- SafeHtml.vue (Die zentrale Komponente) -->\r\n<script setup>\r\nimport DOMPurify from 'dompurify'\r\nimport { computed } from 'vue'\r\n\r\nconst props = defineProps({\r\n  content: {\r\n    type: String,\r\n    required: true\r\n  }\r\n})\r\n\r\nconst sanitizedContent = computed(() => {\r\n  return DOMPurify.sanitize(props.content)\r\n})\r\n</script>\r\n\r\n<template>\r\n  <span v-html=\"sanitizedContent\" />\r\n</template>\r\n\r\n<!-- Anwendung im Rest der App (z.B. OpenwbPageMessages.vue) -->\r\n<script setup>\r\nimport SafeHtml from '@/components/SafeHtml.vue'\r\n\r\nconst message = {\r\n  message: 'Hallo <script>alert(\"xss\")<\\/script> <b>Welt</b>!'\r\n}\r\n</script>\r\n\r\n<template>\r\n  <!-- Statt v-html direkt im Template zu nutzen: -->\r\n  <SafeHtml :content=\"message.message\" />\r\n</template>\r\n```\r\nDas wäre der einzige Ort in der gesamten App, an dem Sanitization und v-html zum Einsatz kommen.\r\n\r\nRestliche Komponenten nutzen nur noch `<SafeHtml/>`, was das Risiko von versehentlichem Unsanitized-Output minimiert und den Code viel wartbarer macht.",
+       "createdAt": "2026-09-16T18:53:01Z",
+       "url": "https://github.com/openWB/openwb-ui-settings/pull/854#discussion_r4029653630",
+       "diffHunk": "@@ -179,6 +179,32 @@ export default {\n         this.hiddenMessages.push(event.topic);\n       }\n     },\n+    /**\n+     * Sanitize HTML message to allow only safe tags like links and line breaks\n+     */\n+    sanitizeMessage(message) {"
+      },
+      {
+       "author": {
+        "login": "benderl",
+        "__typename": "User"
+       },
+       "body": "Eine Variante mit DOMPurify hatte ich direkt im [Kommentar weiter unten](https://github.com/openWB/openwb-ui-settings/pull/854#issuecomment-4266272537) vorgeschlagen.",
+       "createdAt": "2026-09-21T07:13:07Z",
+       "url": "https://github.com/openWB/openwb-ui-settings/pull/854#discussion_r4059959219",
+       "diffHunk": "@@ -179,6 +179,32 @@ export default {\n         this.hiddenMessages.push(event.topic);\n       }\n     },\n+    /**\n+     * Sanitize HTML message to allow only safe tags like links and line breaks\n+     */\n+    sanitizeMessage(message) {"
+      }
+     ]
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,59 @@
+[
+ {
+  "oid": "89fdf4eb906e0904ce865e2910c25a86ecd5554f",
+  "url": "https://github.com/ryckakas/crashcause/commit/89fdf4eb906e0904ce865e2910c25a86ecd5554f",
+  "messageHeadline": "Merge pull request #49 from ryckakas/dependabot/go_modules/kubernetes…",
+  "messageBody": "…-6b5e4c0ca6\n\nBump the kubernetes group with 4 updates",
+  "committedDate": "2026-10-24T16:39:00Z",
+  "parents": {
+   "totalCount": 2
+  },
+  "author": {
+   "name": "Ricardas Kauneckas",
+   "user": {
+    "login": "ryckakas"
+   }
+  },
+  "associatedPullRequests": {
+   "totalCount": 1
+  }
+ },
+ {
+  "oid": "d4551b73a50e7f9415d821a588925c68beed4d01",
+  "url": "https://github.com/ryckakas/crashcause/commit/d4551b73a50e7f9415d821a588925c68beed4d01",
+  "messageHeadline": "Restructure the README around a concise visible core",
+  "messageBody": "The README had grown into a full reference manual read top to bottom.\nThe reference tables (18 cause codes, inspect/watch flags, the RBAC\npermission table, values examples, the JSON shape) are now collapsible\ndetails blocks, and the sinks and AI-layer deep-dives move to\ndocs/sinks.md and docs/ai-layer.md with short summaries left in place.\nThe safety-critical AI facts stay visible in the README summary: off by\ndefault, fail-closed namespace allowlist, redaction is best-effort.\n\nNo content was deleted, only collapsed or moved; all relative links and\nanchors verified.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>",
+  "committedDate": "2026-08-03T17:12:51Z",
+  "parents": {
+   "totalCount": 1
+  },
+  "author": {
+   "name": "ryckakas",
+   "user": {
+    "login": "ryckakas"
+   }
+  },
+  "associatedPullRequests": {
+   "totalCount": 1
+  }
+ },
+ {
+  "oid": "69531a3aa08bf8d47f1428261efc3038537127b6",
+  "url": "https://github.com/ryckakas/crashcause/commit/69531a3aa08bf8d47f1428261efc3038537127b6",
+  "messageHeadline": "Engine rules, collectors, AI layer, sinks with full test suites (Mile…",
+  "messageBody": "…stones 2+4 core)\n\n- engine: 17 rules, priority order per spec, 96% coverage\n- collect: client-go collectors, log rate limiting, owner resolution, 91.7% coverage\n- ai: redactor + anthropic/openai/ollama HTTP clients, redact-before-send, 95.7% coverage\n- sinks: stdout JSON, prometheus counter w/ series lifecycle, loki push w/ backpressure\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>",
+  "committedDate": "2026-08-02T18:40:08Z",
+  "parents": {
+   "totalCount": 1
+  },
+  "author": {
+   "name": "ryckakas",
+   "user": {
+    "login": "ryckakas"
+   }
+  },
+  "associatedPullRequests": {
+   "totalCount": 0
+  }
+ }
+]
