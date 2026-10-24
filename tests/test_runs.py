@@ -13,7 +13,7 @@ def results():
     q = Question.model_validate(
         {"id": "q", "question": "q", "kind": "factual", "expected": [{"url": URL}], "answer": "a"}
     )
-    return evaluate([q], lambda _: [Hit("c", URL, "octo/repo", "pr", None, "h", "t", 0.75)])
+    return evaluate([q], lambda _: [Hit("c", URL, "octo/repo", "pr", "t", None, None, None, "h", "t", 0.75)])
 
 
 def record(timestamp: str, questions: str = "abc:tuning") -> dict:

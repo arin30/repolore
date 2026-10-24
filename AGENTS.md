@@ -102,10 +102,17 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
   `evals/harness.py` (runs the questions, matches hits to expected sources by URL and optional section) and
   `evals/runs.py` (each run saved under `<data-dir>/evals/runs/`, compared with the previous one on the same
   questions). `EXPERIMENTS.md` logs every retrieval experiment, aggregate numbers only.
-- Still to come: `mcp_server.py`.
+- `mcp_server.py` serves `search` and `list_repos` to Claude Code over stdio (`repolore-mcp`, official `mcp` SDK
+  v2 with `MCPServer`; the v1 `FastMCP` import no longer exists). It opens the index read-only per call, so
+  `repolore build` can rewrite it meanwhile, and loads the model on the first search (about a minute here).
+  Never print to stdout in code the server runs: stdout carries the protocol.
 - `cli.py` is Typer wiring only. Logic lives in the stage modules.
 
-Only the MCP server is async. The rest of the pipeline is synchronous on purpose.
+Nothing is async: the MCP SDK runs the plain `def` tools on worker threads, and the rest of the pipeline is
+synchronous on purpose. `LocalEmbedder` locks its lazy model load because those threads can search in parallel.
+
+While a Claude Code session runs the server, files in `.venv` are open, and `uv sync` / `uv add` can fail with
+"Access is denied". Disable the server in `/mcp` or close those sessions before changing dependencies.
 
 ## Comments
 

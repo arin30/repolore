@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "markdown-it-py>=4.2.0",
+    "mcp>=2.3,<3",
     "numpy>=2.5",
     "platformdirs>=4.13.5",
     "pydantic>=2.14.1",
@@ -30,6 +31,7 @@ explicit = true
 
 [project.scripts]
 repolore = "repolore.cli:app"
+repolore-mcp = "repolore.mcp_server:main"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]

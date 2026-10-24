@@ -59,7 +59,10 @@ class Hit:
     url: str
     repo: str
     kind: str
+    title: str
     section: str | None
+    author: str | None
+    created_at: str | None
     header: str
     text: str
     score: float
@@ -67,7 +70,14 @@ class Hit:
 
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path)
+    return _with_vectors(sqlite3.connect(path))
+
+
+def connect_read_only(path: Path) -> sqlite3.Connection:
+    return _with_vectors(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True))
+
+
+def _with_vectors(db: sqlite3.Connection) -> sqlite3.Connection:
     db.enable_load_extension(True)
     sqlite_vec.load(db)
     db.enable_load_extension(False)
@@ -157,14 +167,24 @@ def nearest(db: sqlite3.Connection, vector: Vectors, k: int, filters: Filters) -
             select rowid, distance from chunks_vec
             where embedding match :vector and k = :k{where}
         )
-        select c.id, c.url, c.repo, c.kind, c.section, c.header, c.text, hits.distance
+        select c.id, c.url, c.repo, c.kind, c.title, c.section, c.author, c.created_at, c.header, c.text,
+            hits.distance
         from hits join chunks c on c.rowid = hits.rowid
         order by hits.distance
         """,
         {"vector": vector.astype(np.float32).tobytes(), "k": k, **conditions},
     ).fetchall()
-    return [Hit(*row[:7], score=1 - row[7]) for row in rows]
+    return [Hit(*row[:-1], score=1 - row[-1]) for row in rows]
 
 
 def indexed_urls(db: sqlite3.Connection) -> set[str]:
     return {url for (url,) in db.execute("select distinct url from chunks")}
+
+
+def repo_counts(db: sqlite3.Connection) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for repo, kind, count in db.execute(
+        "select repo, kind, count(*) from chunks group by repo, kind order by repo, kind"
+    ):
+        counts.setdefault(repo, {})[kind] = count
+    return counts
