@@ -1,11 +1,13 @@
+import io
 import shutil
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from repolore import __version__
+from repolore import __version__, cli
 from repolore.cli import app
 from repolore.paths import resolve_paths
 from repolore.sources.github import GitHubClient, GitHubError
@@ -143,3 +145,38 @@ def test_online_ingest_closes_the_client(tmp_path: Path, monkeypatch: pytest.Mon
 
     assert result.exit_code == 0
     assert closed == [True]
+
+
+def test_inspect_shows_counts_histogram_and_samples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    shutil.copytree(FIXTURES / "crashcause", data_dir / "raw" / "ryckakas" / "crashcause")
+
+    result = runner.invoke(app, ["inspect", "--samples", "2", "--seed", "1"])
+
+    assert result.exit_code == 0
+    lines = [line.split() for line in result.output.splitlines()]
+    assert lines[0] == ["7", "documents,", "26", "chunks"]
+    assert lines[1:6] == [["pr", "6"], ["review", "0"], ["issue", "16"], ["commit", "1"], ["doc", "3"]]
+    assert lines[6] == ["tokens", "(estimated)"]
+    assert [line[0] for line in lines[7:13]] == ["1-50", "51-100", "101-200", "201-400", "401-800", ">800"]
+    assert sum(int(line[1]) for line in lines[7:13]) == 26
+    assert result.output.count("\n--- https://github.com/ryckakas/crashcause/") == 2
+
+
+def test_inspect_without_cache_says_to_ingest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+
+    result = runner.invoke(app, ["inspect"])
+
+    assert result.exit_code == 1
+    assert "run `repolore ingest` first" in result.output
+
+
+def test_output_streams_that_are_not_files_are_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    stdout = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+
+    cli._use_utf8_output()
+
+    assert sys.stdout is stdout
