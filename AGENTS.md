@@ -31,6 +31,7 @@ uv run repolore ingest      # fetch the repos in repolore.toml into the raw cach
 uv run repolore inspect     # chunk the cached documents: counts, token histogram, random samples
 uv run repolore build       # embed what changed and write the index (<data-dir>/db/default.db; --db names another)
 uv run repolore search "…"  # nearest chunks, with --repo, --kind, --author, -k
+uv run repolore eval        # score retrieval on the eval questions; --show-misses, --holdout
 uv run ruff format          # format
 uv run ruff check           # lint
 uv run pyright              # type-check (standard mode)
@@ -94,10 +95,14 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
   kind and author inside the KNN query, and an FTS5 table. `EmbeddingCache` (`<data-dir>/cache/embeddings.db`)
   keys vectors by model and chunk text, so every index reuses them and a rebuild embeds only changed chunks.
 - `indexing.py` builds an index; `retrieval.py` searches one and refuses an index built with another model.
-- Still to come: `evals/` scoring, `mcp_server.py`.
 - `evals/questions.py` loads the eval question set. The real set lives in the config dir
   (`repolore questions` prints where) and is never committed, because it names private repos;
   `evals/questions.example.yaml` shows the format.
+- `evals/metrics.py` (recall@k, MRR, nDCG@10, hand-written and checked against ir-measures in the tests),
+  `evals/harness.py` (runs the questions, matches hits to expected sources by URL and optional section) and
+  `evals/runs.py` (each run saved under `<data-dir>/evals/runs/`, compared with the previous one on the same
+  questions). `EXPERIMENTS.md` logs every retrieval experiment, aggregate numbers only.
+- Still to come: `mcp_server.py`.
 - `cli.py` is Typer wiring only. Logic lives in the stage modules.
 
 Only the MCP server is async. The rest of the pipeline is synchronous on purpose.

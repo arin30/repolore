@@ -59,6 +59,7 @@ class Hit:
     url: str
     repo: str
     kind: str
+    section: str | None
     header: str
     text: str
     score: float
@@ -156,10 +157,14 @@ def nearest(db: sqlite3.Connection, vector: Vectors, k: int, filters: Filters) -
             select rowid, distance from chunks_vec
             where embedding match :vector and k = :k{where}
         )
-        select c.id, c.url, c.repo, c.kind, c.header, c.text, hits.distance
+        select c.id, c.url, c.repo, c.kind, c.section, c.header, c.text, hits.distance
         from hits join chunks c on c.rowid = hits.rowid
         order by hits.distance
         """,
         {"vector": vector.astype(np.float32).tobytes(), "k": k, **conditions},
     ).fetchall()
-    return [Hit(*row[:6], score=1 - row[6]) for row in rows]
+    return [Hit(*row[:7], score=1 - row[7]) for row in rows]
+
+
+def indexed_urls(db: sqlite3.Connection) -> set[str]:
+    return {url for (url,) in db.execute("select distinct url from chunks")}
