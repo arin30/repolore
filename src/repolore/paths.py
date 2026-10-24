@@ -14,6 +14,17 @@ class AppPaths:
     questions_file: Path
     data_dir: Path
 
+    @property
+    def raw_dir(self) -> Path:
+        return self.data_dir / "raw"
+
+    @property
+    def embedding_cache(self) -> Path:
+        return self.data_dir / "cache" / "embeddings.db"
+
+    def index_file(self, name: str) -> Path:
+        return self.data_dir / "db" / f"{name}.db"
+
 
 def resolve_paths(data_dir: Path | None = None) -> AppPaths:
     # Roaming config follows the user across machines; the data dir holds rebuildable caches and DBs, so it stays local.

@@ -1,0 +1,165 @@
+import hashlib
+import sqlite3
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import sqlite_vec
+
+from repolore.chunking import Chunk
+from repolore.embedding import Vectors
+
+SCHEMA = """
+create table meta (key text primary key, value text not null);
+create table chunks (
+    rowid integer primary key,
+    id text not null unique,
+    url text not null,
+    repo text not null,
+    kind text not null,
+    visibility text not null,
+    title text not null,
+    section text,
+    author text,
+    created_at text,
+    state text,
+    ai_assisted integer not null,
+    header text not null,
+    text text not null
+);
+create virtual table chunks_vec using vec0(
+    embedding float[{dim}] distance_metric=cosine,
+    repo text,
+    kind text,
+    author text
+);
+create virtual table chunks_fts using fts5(
+    header, text, content='chunks', content_rowid='rowid', tokenize="unicode61 tokenchars '_'"
+);
+"""
+TABLES = ("meta", "chunks", "chunks_vec", "chunks_fts")
+NO_AUTHOR = ""
+
+
+class StoreError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Filters:
+    repo: str | None = None
+    kind: str | None = None
+    author: str | None = None
+
+
+@dataclass(frozen=True)
+class Hit:
+    chunk_id: str
+    url: str
+    repo: str
+    kind: str
+    header: str
+    text: str
+    score: float
+
+
+def connect(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    db.enable_load_extension(True)
+    sqlite_vec.load(db)
+    db.enable_load_extension(False)
+    return db
+
+
+def cache_key(model_id: str, text: str) -> str:
+    return hashlib.sha256(f"{model_id}\0{text}".encode()).hexdigest()
+
+
+class EmbeddingCache:
+    """Vectors keyed by model and text, shared by every index so unchanged chunks are never embedded twice."""
+
+    def __init__(self, db: sqlite3.Connection) -> None:
+        self._db = db
+        db.execute("create table if not exists embeddings (key text primary key, vector blob not null)")
+
+    def get(self, keys: Iterable[str]) -> dict[str, Vectors]:
+        found: dict[str, Vectors] = {}
+        for key in keys:
+            row = self._db.execute("select vector from embeddings where key = ?", (key,)).fetchone()
+            if row:
+                found[key] = np.frombuffer(row[0], dtype=np.float32)
+        return found
+
+    def put(self, keys: Sequence[str], vectors: Vectors) -> None:
+        with self._db:
+            self._db.executemany(
+                "insert or replace into embeddings (key, vector) values (?, ?)",
+                [(key, vector.astype(np.float32).tobytes()) for key, vector in zip(keys, vectors, strict=True)],
+            )
+
+
+def write_index(db: sqlite3.Connection, chunks: Sequence[Chunk], vectors: Vectors, model_id: str, dim: int) -> None:
+    with db:
+        for table in TABLES:
+            db.execute(f"drop table if exists {table}")
+        db.executescript(SCHEMA.format(dim=dim))
+        db.executemany("insert into meta (key, value) values (?, ?)", [("model_id", model_id), ("dim", str(dim))])
+        for rowid, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True), start=1):
+            _insert_chunk(db, rowid, chunk, vector)
+        db.execute("insert into chunks_fts (chunks_fts) values ('rebuild')")
+
+
+def _insert_chunk(db: sqlite3.Connection, rowid: int, chunk: Chunk, vector: Vectors) -> None:
+    document = chunk.document
+    created_at = document.created_at.isoformat() if document.created_at else None
+    db.execute(
+        "insert into chunks values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            rowid,
+            chunk.id,
+            document.url,
+            document.repo,
+            document.kind,
+            document.visibility,
+            document.title,
+            chunk.section,
+            document.author,
+            created_at,
+            document.state,
+            document.ai_assisted,
+            chunk.header,
+            chunk.text,
+        ),
+    )
+    db.execute(
+        "insert into chunks_vec (rowid, embedding, repo, kind, author) values (?, ?, ?, ?, ?)",
+        (rowid, vector.astype(np.float32).tobytes(), document.repo, document.kind, document.author or NO_AUTHOR),
+    )
+
+
+def index_model(db: sqlite3.Connection) -> tuple[str, int]:
+    try:
+        meta = dict(db.execute("select key, value from meta").fetchall())
+    except sqlite3.OperationalError as error:
+        raise StoreError("The index is empty; run `repolore build` first.") from error
+    return meta["model_id"], int(meta["dim"])
+
+
+def nearest(db: sqlite3.Connection, vector: Vectors, k: int, filters: Filters) -> list[Hit]:
+    conditions = {"repo": filters.repo, "kind": filters.kind, "author": filters.author}
+    where = "".join(f" and {column} = :{column}" for column, value in conditions.items() if value is not None)
+    rows = db.execute(
+        f"""
+        with hits as (
+            select rowid, distance from chunks_vec
+            where embedding match :vector and k = :k{where}
+        )
+        select c.id, c.url, c.repo, c.kind, c.header, c.text, hits.distance
+        from hits join chunks c on c.rowid = hits.rowid
+        order by hits.distance
+        """,
+        {"vector": vector.astype(np.float32).tobytes(), "k": k, **conditions},
+    ).fetchall()
+    return [Hit(*row[:6], score=1 - row[6]) for row in rows]

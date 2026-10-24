@@ -29,6 +29,8 @@ uv sync                     # install the project and dev tools from uv.lock
 uv run repolore --help      # the CLI
 uv run repolore ingest      # fetch the repos in repolore.toml into the raw cache; --offline rebuilds from it
 uv run repolore inspect     # chunk the cached documents: counts, token histogram, random samples
+uv run repolore build       # embed what changed and write the index (<data-dir>/db/default.db; --db names another)
+uv run repolore search "…"  # nearest chunks, with --repo, --kind, --author, -k
 uv run ruff format          # format
 uv run ruff check           # lint
 uv run pyright              # type-check (standard mode)
@@ -84,9 +86,15 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
 - `chunking.py` splits each document's markdown at headings (markdown-it-py, top-level blocks only, so
   a code fence or table is never cut), packs a long section into pieces of up to 400 estimated tokens, and
   prefixes each chunk with a header like `owner/repo · PR #17 · <title> · <section>`.
-- `embedding/` (an `Embedder` protocol; local `voyage-4-nano` by default, Voyage's API
-  optional), `store.py` (one SQLite file with sqlite-vec + FTS5; one DB file per pipeline config),
-  `retrieval.py`, `evals/`, `mcp_server.py`, `cli.py`.
+- `embedding/` has the `Embedder` protocol and `LocalEmbedder`: `voyage-4-nano` through
+  sentence-transformers, on the CPU in float32, 1024 dimensions, pinned to a reviewed model revision
+  because it runs the model's own code. torch comes from PyTorch's CPU index (`[tool.uv.sources]`);
+  PyPI's Linux wheel bundles gigabytes of CUDA.
+- `store.py` writes one SQLite file per index: `chunks`, a sqlite-vec `vec0` table filtered by repo,
+  kind and author inside the KNN query, and an FTS5 table. `EmbeddingCache` (`<data-dir>/cache/embeddings.db`)
+  keys vectors by model and chunk text, so every index reuses them and a rebuild embeds only changed chunks.
+- `indexing.py` builds an index; `retrieval.py` searches one and refuses an index built with another model.
+- Still to come: `evals/` scoring, `mcp_server.py`.
 - `evals/questions.py` loads the eval question set. The real set lives in the config dir
   (`repolore questions` prints where) and is never committed, because it names private repos;
   `evals/questions.example.yaml` shows the format.
@@ -107,7 +115,8 @@ site. Never a "what" comment restating what the code already says.
 
 Tests live in `tests/`, one file per module (`test_<module>.py`), using plain pytest functions and
 fixtures. **Tests never touch the network by default.** HTTP is faked with `httpx.MockTransport`
-fed from saved JSON samples, and embeddings come from a deterministic fake `Embedder`. Fixtures in
+fed from saved JSON samples, and embeddings come from `FakeEmbedder` in `tests/conftest.py`, a deterministic
+bag-of-words stand-in. Fixtures in
 `tests/fixtures/` come from **public repos only**, because this repo is public; never copy data from a
 private repo into it. Anything that
 calls a real API is marked `@pytest.mark.live`, which is deselected unless run with `-m live`.

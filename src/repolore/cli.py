@@ -4,6 +4,7 @@ import random
 import sys
 import tomllib
 from collections import Counter
+from contextlib import closing
 from pathlib import Path
 from typing import Annotated
 
@@ -15,10 +16,14 @@ from repolore import __version__
 from repolore.chunking import MAX_TOKENS, Chunk, chunk_document
 from repolore.config import Config, load_config
 from repolore.documents import Document, DocumentKind
+from repolore.embedding.local import LocalEmbedder
 from repolore.evals.questions import QuestionKind, load_questions
+from repolore.indexing import build_index
 from repolore.ingest import ingest as ingest_repos
 from repolore.paths import AppPaths, resolve_paths
+from repolore.retrieval import search as search_index
 from repolore.sources.github import GitHubClient, GitHubError, resolve_token
+from repolore.store import EmbeddingCache, Filters, StoreError, connect
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -89,7 +94,7 @@ def ingest(
     client = None
     try:
         client = None if offline else GitHubClient.connect(resolve_token())
-        documents = ingest_repos(config.repos, paths.data_dir / "raw", client)
+        documents = ingest_repos(config.repos, paths.raw_dir, client)
     except GitHubError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
@@ -100,6 +105,15 @@ def ingest(
         if client:
             client.close()
     _print_counts(config.repos, documents)
+
+
+def _cached_documents(paths: AppPaths) -> list[Document]:
+    config = _config_or_exit(paths.config_file)
+    try:
+        return ingest_repos(config.repos, paths.raw_dir, None)
+    except FileNotFoundError as error:
+        typer.echo(f"No raw cache at {Path(error.filename).parent}; run `repolore ingest` first.", err=True)
+        raise typer.Exit(1) from None
 
 
 def _config_or_exit(path: Path) -> Config:
@@ -134,13 +148,7 @@ def inspect(
     seed: Annotated[int | None, typer.Option(help="Seed for picking the samples, to see the same ones again.")] = None,
 ) -> None:
     """Chunk the cached documents and show chunk counts, a token-length histogram and random samples."""
-    paths: AppPaths = ctx.obj
-    config = _config_or_exit(paths.config_file)
-    try:
-        documents = ingest_repos(config.repos, paths.data_dir / "raw", None)
-    except FileNotFoundError as error:
-        typer.echo(f"No raw cache at {Path(error.filename).parent}; run `repolore ingest` first.", err=True)
-        raise typer.Exit(1) from None
+    documents = _cached_documents(ctx.obj)
     chunks = [chunk for document in documents for chunk in chunk_document(document)]
     typer.echo(f"{len(documents)} documents, {len(chunks)} chunks")
     kinds = Counter(chunk.document.kind for chunk in chunks)
@@ -160,3 +168,53 @@ def _print_histogram(chunks: list[Chunk]) -> None:
         label = f"{lower + 1}-{bucket}" if bucket else f">{lower}"
         typer.echo(f"  {label:>9} {counts[bucket]:>6} {'#' * round(BAR_WIDTH * counts[bucket] / largest)}")
         lower = bucket or lower
+
+
+DEFAULT_INDEX = "default"
+SNIPPET_CHARS = 300
+IndexOption = Annotated[str, typer.Option("--db", help="Name of the index to use, one per pipeline config.")]
+
+
+@app.command()
+def build(ctx: typer.Context, db: IndexOption = DEFAULT_INDEX) -> None:
+    """Chunk the cached documents, embed what changed and write the search index."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    paths: AppPaths = ctx.obj
+    chunks = [chunk for document in _cached_documents(paths) for chunk in chunk_document(document)]
+    index_file = paths.index_file(db)
+    with closing(connect(index_file)) as index, closing(connect(paths.embedding_cache)) as cache:
+        stats = build_index(chunks, LocalEmbedder(), index, EmbeddingCache(cache))
+    typer.echo(
+        f"{stats.chunks} chunks indexed in {index_file}, {stats.embedded} embedded, "
+        f"{stats.chunks - stats.embedded} reused"
+    )
+
+
+@app.command()
+def search(
+    ctx: typer.Context,
+    query: Annotated[str, typer.Argument(help="What to look for, in plain words.")],
+    k: Annotated[int, typer.Option("-k", min=1, help="How many chunks to return.")] = 5,
+    repo: Annotated[str | None, typer.Option(help="Only this repo, as owner/name.")] = None,
+    kind: Annotated[DocumentKind | None, typer.Option(help="Only this kind of source.")] = None,
+    author: Annotated[str | None, typer.Option(help="Only this author's GitHub login.")] = None,
+    db: IndexOption = DEFAULT_INDEX,
+) -> None:
+    """Find the chunks closest in meaning to the query."""
+    paths: AppPaths = ctx.obj
+    index_file = paths.index_file(db)
+    if not index_file.exists():
+        typer.echo(f"No index at {index_file}; run `repolore build` first.", err=True)
+        raise typer.Exit(1)
+    filters = Filters(repo=repo, kind=kind, author=author)
+    try:
+        with closing(connect(index_file)) as index:
+            hits = search_index(index, LocalEmbedder(), query, k, filters)
+    except StoreError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    if not hits:
+        typer.echo("No matches.")
+    for rank, hit in enumerate(hits, start=1):
+        snippet = " ".join(hit.text.split())[:SNIPPET_CHARS]
+        typer.echo(f"{rank}. {hit.score:.3f}  {hit.header}\n   {hit.url}\n   {snippet}\n")
