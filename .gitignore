@@ -1,0 +1,10 @@
+.plans/
+tmp/
+.env
+*.db
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
