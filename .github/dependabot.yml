@@ -1,0 +1,25 @@
+version: 2
+
+# Weekly version bumps for both ecosystems. The workflow actions are pinned to a commit with the
+# version in a comment, and Dependabot moves both together.
+#
+# Cooldown holds a release for seven days before proposing it: a malicious or broken publish is
+# usually caught and pulled within the week. Security updates for vulnerable dependencies are
+# switched on in the repository settings and arrive on their own, not on this schedule.
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      uv-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

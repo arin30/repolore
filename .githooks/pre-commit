@@ -1,0 +1,5 @@
+#!/bin/sh
+if [ "$(git symbolic-ref --short -q HEAD)" = "main" ]; then
+  echo "Direct commits to main are blocked: create a branch and open a PR." >&2
+  exit 1
+fi
