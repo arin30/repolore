@@ -1,0 +1,102 @@
+query RepoInfo($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    url
+    isPrivate
+    defaultBranchRef { name }
+  }
+}
+
+query RepoPullRequests($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: 25, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { ...PRFields }
+    }
+  }
+}
+
+query RepoIssues($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issues(first: 50, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        title
+        body
+        url
+        state
+        createdAt
+        author { login __typename }
+        comments(first: 100) {
+          totalCount
+          nodes { author { login __typename } body createdAt }
+        }
+      }
+    }
+  }
+}
+
+query DefaultBranchHistory($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 100, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              oid
+              url
+              messageHeadline
+              messageBody
+              committedDate
+              parents { totalCount }
+              author { name user { login } }
+              associatedPullRequests(first: 1) { totalCount }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fragment PRFields on PullRequest {
+  number
+  title
+  body
+  url
+  state
+  createdAt
+  author { login __typename }
+  files(first: 100) {
+    totalCount
+    nodes { path }
+  }
+  commits(first: 100) {
+    totalCount
+    nodes { commit { messageHeadline messageBody } }
+  }
+  comments(first: 100) {
+    totalCount
+    nodes { author { login __typename } body createdAt }
+  }
+  reviews(first: 50) {
+    totalCount
+    nodes { author { login __typename } body createdAt }
+  }
+  reviewThreads(first: 100) {
+    totalCount
+    nodes {
+      isResolved
+      isOutdated
+      path
+      line
+      originalLine
+      comments(first: 50) {
+        totalCount
+        nodes { author { login __typename } body createdAt url diffHunk }
+      }
+    }
+  }
+}

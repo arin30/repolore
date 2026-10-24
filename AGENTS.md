@@ -27,6 +27,7 @@ Python 3.12 (pinned in `.python-version`), managed with uv. Code that opens file
 ```sh
 uv sync                     # install the project and dev tools from uv.lock
 uv run repolore --help      # the CLI
+uv run repolore ingest      # fetch the repos in repolore.toml into the raw cache; --offline rebuilds from it
 uv run ruff format          # format
 uv run ruff check           # lint
 uv run pyright              # type-check (standard mode)
@@ -72,8 +73,11 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
   `%APPDATA%\repolore\repolore.toml` (roaming). Data is `%LOCALAPPDATA%\repolore` (local),
   holding the raw API cache and the DB files, and `--data-dir` overrides it. **The repo never
   contains corpus data.** It contains private code, so it stays out of git.
-- `sources/` fetches GitHub data over GraphQL with a sync `httpx` client, and reads local `.plans/`.
-  Raw responses are cached under the data dir, so chunking and embedding never need the network.
+- `config.py` loads `repolore.toml` (for now just `repos = ["owner/name", …]`).
+- `sources/` fetches GitHub data with a sync `httpx` client: GraphQL for PRs, issues and commits
+  (`github.graphql`), REST for the markdown tree and blobs. `models.py` types the responses. Raw
+  responses are cached as `<data-dir>/raw/<owner>/<repo>/*.json`, so chunking and embedding never
+  need the network. Local `.plans/` come later.
 - `documents.py` normalizes into `Document`s. Bots are filtered by GraphQL `author.__typename`,
   not by a login list. Deleted accounts become `ghost`.
 - `chunking.py`, `embedding/` (an `Embedder` protocol; local `voyage-4-nano` by default, Voyage's API
@@ -99,6 +103,8 @@ site. Never a "what" comment restating what the code already says.
 
 Tests live in `tests/`, one file per module (`test_<module>.py`), using plain pytest functions and
 fixtures. **Tests never touch the network by default.** HTTP is faked with `httpx.MockTransport`
-fed from saved JSON samples, and embeddings come from a deterministic fake `Embedder`. Anything that
+fed from saved JSON samples, and embeddings come from a deterministic fake `Embedder`. Fixtures in
+`tests/fixtures/` come from **public repos only**, because this repo is public; never copy data from a
+private repo into it. Anything that
 calls a real API is marked `@pytest.mark.live`, which is deselected unless run with `-m live`.
 Retrieval quality is measured by the eval harness (`repolore eval`), not by unit tests.

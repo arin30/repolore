@@ -1,0 +1,10 @@
+[
+ {
+  "path": "README.md",
+  "text": "# crashcause\n\n![crashcause: explains why a Kubernetes pod crashed](docs/images/cover-hero.jpg)\n\n**Find out why a Kubernetes pod crashed, straight from live cluster state.**\n\nNo `kubectl describe`, no `kubectl logs --previous`, no pasting output into anything. crashcause\nreads the pod's status, events, previous-container logs and node conditions itself, and names the\ncause as one of 18 stable cause"
+ },
+ {
+  "path": "docs/ai-layer.md",
+  "text": "# The AI layer\n\nThe deep-dive behind the README's [AI summaries](../README.md#ai-summaries-optional-off-by-default)\nsummary: providers and key handling, exactly what is and is never sent, how redaction\nworks and where it deliberately stops, and what happens when a provider call fails.\n\n## What it does\n\n`--ai` / `ai.enabled` turn on an optional layer that sends the log tail and diagnosis\nevidence t"
+ }
+]

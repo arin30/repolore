@@ -1,0 +1,248 @@
+[
+ {
+  "number": 1,
+  "title": "Fix/ci lint govulncheck",
+  "body": "",
+  "url": "https://github.com/ryckakas/crashcause/pull/1",
+  "state": "MERGED",
+  "createdAt": "2026-08-02T20:45:01Z",
+  "author": {
+   "login": "ryckakas",
+   "__typename": "User"
+  },
+  "files": {
+   "totalCount": 27,
+   "nodes": [
+    {
+     "path": ".golangci.yml"
+    },
+    {
+     "path": "CHANGELOG.md"
+    },
+    {
+     "path": "go.mod"
+    },
+    {
+     "path": "go.sum"
+    },
+    {
+     "path": "hack/e2e.sh"
+    },
+    {
+     "path": "internal/cli/ai_flags.go"
+    },
+    {
+     "path": "internal/cli/root.go"
+    },
+    {
+     "path": "internal/collect/node.go"
+    },
+    {
+     "path": "internal/engine/classify_test.go"
+    },
+    {
+     "path": "internal/engine/engine.go"
+    },
+    {
+     "path": "internal/engine/helpers.go"
+    },
+    {
+     "path": "internal/engine/helpers_test.go"
+    },
+    {
+     "path": "internal/engine/rules.go"
+    },
+    {
+     "path": "internal/engine/types.go"
+    },
+    {
+     "path": "internal/inspect/inspect.go"
+    },
+    {
+     "path": "internal/inspect/render.go"
+    },
+    {
+     "path": "internal/sinks/loki.go"
+    },
+    {
+     "path": "internal/sinks/loki_test.go"
+    },
+    {
+     "path": "internal/sinks/prometheus_test.go"
+    },
+    {
+     "path": "internal/sinks/stdout.go"
+    },
+    {
+     "path": "internal/watch/config.go"
+    },
+    {
+     "path": "internal/watch/controller.go"
+    },
+    {
+     "path": "internal/watch/helpers_test.go"
+    },
+    {
+     "path": "internal/watch/informer_test.go"
+    },
+    {
+     "path": "internal/watch/leader.go"
+    },
+    {
+     "path": "internal/watch/server.go"
+    },
+    {
+     "path": "internal/watch/trigger.go"
+    }
+   ]
+  },
+  "commits": {
+   "totalCount": 3,
+   "nodes": [
+    {
+     "commit": {
+      "messageHeadline": "Fix CI: golangci-lint v2 config schema, x/text + x/net security bumps",
+      "messageBody": "- remove exhaustive.check-generated (rejected by golangci-lint 2.12 schema)\n- bump golang.org/x/text to v0.40.0 and x/net to v0.57.0 for GO-2026-5970,\n  GO-2026-5026, GO-2026-4918 (reachable via the AI layer HTTP client)\n- pin toolchain go1.25.0 (pulled forward by the x/net requirement)\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+     }
+    },
+    {
+     "commit": {
+      "messageHeadline": "e2e: fix stuck-init wait predicate jsonpath (missing .status prefix)",
+      "messageBody": "The startedAt query hit a nonexistent path, so the readiness condition\nnever passed and the scenario timed out despite the pod being correctly\nstuck (confirmed by the CI run's describe dump).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+     }
+    },
+    {
+     "commit": {
+      "messageHeadline": "Fix all golangci-lint findings",
+      "messageBody": "CI (golangci-lint v2.12.2) reported 39 issues on this branch; running the\nsame linter locally surfaced a handful more that the CI log had capped.\nAll are fixed at the source — no file-level exclusions were added to\n.golangci.yml, and only one targeted //nolint (with a reason) was needed.\n\nmisspell (24): British -> US spellings in comments and test-case strings\n  across internal/engine, internal/inspect, internal/sinks and\n  internal/watch (behaviour, cancelled, marshalled, recognised, serialise,\n  colour, honouring, summarises, cancelling). All occurrences were in\n  comments or subtest names; no identifiers needed renaming.\n\nerrcheck (5): unchecked fmt.Fprintln to report/error writers in\n  internal/inspect/inspect.go and internal/cli/root.go are now `_, _ =`,\n  matching how the codebase already treats best-effort output. The\n  enclosing helpers return int exit codes, not errors, so there is no\n  error-propagation pattern to follow.\n\ncontextcheck (3): shutdownServers, startServers/serveMux and\n  Controller.closeSinks now take the caller's context. The shutdown\n  timeout is derived from context.WithoutCancel(ctx) rather than ctx\n  directly: Run's deferred shutdown runs precisely when ctx is already\n  canceled, so wrapping ctx itself would abort the graceful drain instead\n  of honoring shutdownTimeout. This keeps the existing bounded\n  grace-period semantics exactly.\n\nnoctx (4): net.Listen -> (&net.ListenConfig{}).Listen(ctx, ...) in\n  internal/watch/server.go; httptest.NewRequestWithContext and\n  http.NewRequestWithContext + client.Do in the sinks and watch tests\n  (response bodies are still closed, keeping bodyclose satisfied).\n\ngosec (2): G304 in internal/cli/ai_flags.go is resolved by filepath.Clean\n  on the --ai-redact-extra path — reading an operator-provided pattern\n  file is the documented feature. G101 on internal/sinks/loki.go's\n  lokiEnvBearerToken carries the only //nolint in this change: the\n  constant is the *name* of an env var, not a credential.\n\nrevive (4): doc comments on the three exported const blocks in\n  internal/engine/types.go (block comments, not per-constant), and an\n  unused test-helper parameter renamed to _.\n\nstaticcheck QF1002 (1): internal/collect/node.go uses a tagged switch on\n  cond.Type. Because .golangci.yml sets default-signifies-exhaustive:\n  false, the tagged form newly required full enum coverage, so the two\n  non-pressure NodeConditionType values get an explicit no-op case —\n  behaviorally identical to the previous untagged switch.\n\nunparam (1): eventsMatching's `reason` parameter always received\n  \"Unhealthy\" at all four call sites; it is dropped and applied inside\n  the function.\n\ncopyloopvar (1): removed a redundant `tc := tc` in loki_test.go.\n\nNo behavior changes. gofmt clean, go build, go vet and\ngo test -race -count=1 ./... all pass; golangci-lint run ./... reports\n0 issues.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+     }
+    }
+   ]
+  },
+  "comments": {
+   "totalCount": 0,
+   "nodes": []
+  },
+  "reviews": {
+   "totalCount": 0,
+   "nodes": []
+  },
+  "reviewThreads": {
+   "totalCount": 0,
+   "nodes": []
+  }
+ },
+ {
+  "number": 3,
+  "title": "Bump the kubernetes group with 3 updates",
+  "body": "Bumps the kubernetes group with 3 updates: [k8s.io/apimachinery](https://github.com/kubernetes/apimachinery), [k8s.io/cli-runtime](https://github.com/kubernetes/cli-runtime) and [k8s.io/client-go](https://github.com/kubernetes/client-go).\n\nUpdates `k8s.io/apimachinery` from 0.31.4 to 0.36.3\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/40bf4b2b62f8838b9b37de7b407793f1f17ee225\"><code>40bf4b2</code></a> Update dependencies to v0.36.3 tag</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/34d46be4f2cba34b54c9eca942ff078fabbe35dd\"><code>34d46be</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/apimachinery/issues/140296\">#140296</a> from jpbetz/cherry-pick-smd-306-revert</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/66a3724b370b46a679a1cbd9b44551f44b11c8c0\"><code>66a3724</code></a> Bump sigs.k8s.io/structured-merge-diff/v6 to v6.3.3</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/2ec982dc45d3085c6ec641be237b1fc39a7494ac\"><code>2ec982d</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/apimachinery/issues/139508\">#139508</a><code>lalitc375/automated-cherry-pick-of-#139480</code></li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/6a881027b107fb0f87aa3a5760610cac17b4d3a0\"><code>6a88102</code></a> Fix wrong marking of errors</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/efb7f2628b269921e5f12c4d42aece418c76789c\"><code>efb7f26</code></a> Merge remote-tracking branch 'origin/master' into release-1.36</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/d966e565cd271c44ba799b594ddb67987791cb80\"><code>d966e56</code></a> Update github.com/moby/spdystream from v0.5.0 to v0.5.1</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/79b363268543c402b68449b0cd531f8f8d0197d1\"><code>79b3632</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/apimachinery/issues/137864\">#137864</a> from yongruilin/dv-dra-mismatch</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/a8822f7bf620eede6c3f36354cec940c3844e7a8\"><code>a8822f7</code></a> Add slice and map union member support with tests</li>\n<li><a href=\"https://github.com/kubernetes/apimachinery/commit/7dba2d08090b9d2285266ec2492d0b6395151f50\"><code>7dba2d0</code></a> Use IsZero instead of IsNil for union ratcheting check</li>\n<li>Additional commits viewable in <a href=\"https://github.com/kubernetes/apimachinery/compare/v0.31.4...v0.36.3\">compare view</a></li>\n</ul>\n</details>\n<br />\n\nUpdates `k8s.io/cli-runtime` from 0.31.4 to 0.36.3\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/a39fac45a4c7fa6776d17e9ae18f79cb99a77d3b\"><code>a39fac4</code></a> Update dependencies to v0.36.3 tag</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/88a785e6f1aa55e696ca938786c614a752df90b8\"><code>88a785e</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/cli-runtime/issues/140296\">#140296</a> from jpbetz/cherry-pick-smd-306-revert</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/170690623b53372f1e174a86c589ccf45931cebf\"><code>1706906</code></a> Bump sigs.k8s.io/structured-merge-diff/v6 to v6.3.3</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/9157a449fa1b8b765bb13654d6d3fd4f5f0313b8\"><code>9157a44</code></a> Merge remote-tracking branch 'origin/master' into release-1.36</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/fb4f11daba819ba2cd61c95b036e623b51b63f34\"><code>fb4f11d</code></a> Update github.com/moby/spdystream from v0.5.0 to v0.5.1</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/08a1cd8b27b67f2f42c014ca88e98190a09a5b16\"><code>08a1cd8</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/cli-runtime/issues/137849\">#137849</a> from bryantbiggs/deps/update-kube-openapi</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/579d47f2d3a6744fce44e7336253db5838fc6761\"><code>579d47f</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/cli-runtime/issues/137843\">#137843</a> from pacoxu/cobra-v1.10.2</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/e54571213ffa34ba35d10aec6eb21a2cb9aff651\"><code>e545712</code></a> dependencies: bump kube-openapi to drop ginkgo/gomega indirect deps</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/f392d2179e004dc0bb9450069f2e2088d0caa2ed\"><code>f392d21</code></a> bump spf13/cobra to v1.10.2</li>\n<li><a href=\"https://github.com/kubernetes/cli-runtime/commit/b0a204f5a85d2db5b4d557a41a36f038c1e5a5cf\"><code>b0a204f</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/cli-runtime/issues/137298\">#137298</a> from dims/dsri/cri-streaming-option-a-hardcut</li>\n<li>Additional commits viewable in <a href=\"https://github.com/kubernetes/cli-runtime/compare/v0.31.4...v0.36.3\">compare view</a></li>\n</ul>\n</details>\n<br />\n\nUpdates `k8s.io/client-go` from 0.31.4 to 0.36.3\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/44a8af2fee834a8fc3523360e029cf7ea7104622\"><code>44a8af2</code></a> Update dependencies to v0.36.3 tag</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/f501ada2efb78c4685f993249b076570db6db84f\"><code>f501ada</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/client-go/issues/140296\">#140296</a> from jpbetz/cherry-pick-smd-306-revert</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/a43e1d73d6202bcfc80795159218efc2f649cfd3\"><code>a43e1d7</code></a> Bump sigs.k8s.io/structured-merge-diff/v6 to v6.3.3</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/f22a53e6273b1e6652107e62998997c714872f35\"><code>f22a53e</code></a> Merge remote-tracking branch 'origin/master' into release-1.36</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/a948641f81a43fb81beb739cb6773028e1981d86\"><code>a948641</code></a> Update github.com/moby/spdystream from v0.5.0 to v0.5.1</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/7e44ffcaa96165d6d77178c3aaca66d4523786b9\"><code>7e44ffc</code></a> Add Workload-Aware Preemption fields to Workload and PodGroup APIs</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/df2d882697f9f437d53ae16b8091786250ce0812\"><code>df2d882</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/client-go/issues/136989\">#136989</a> from nojnhuh/podgroup-resourceclaim</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/4eece5291a474209f7fcba3cd8187ad855eeeca3\"><code>4eece52</code></a> Workload API: PodGroup ResourceClaims (KEP-5729)</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/3d35c512076e7c95967ac4f3565c588495785796\"><code>3d35c51</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/client-go/issues/137190\">#137190</a> from everpeace/KEP-5491-alpha</li>\n<li><a href=\"https://github.com/kubernetes/client-go/commit/04341177268fa5b2cb8a7502a36a81b87a6da2b2\"><code>0434117</code></a> Merge pull request <a href=\"https://redirect.github.com/kubernetes/client-go/issues/137028\">#137028</a> from nmn3m/feature/dra-resource-pool-status</li>\n<li>Additional commits viewable in <a href=\"https://github.com/kubernetes/client-go/compare/v0.31.4...v0.36.3\">compare view</a></li>\n</ul>\n</details>\n<br />\n\n\nDependabot will resolve any conflicts with this PR as long as you don't alter it yourself. You can also trigger a rebase manually by commenting `@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits that have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all of the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this group update PR and stop Dependabot creating any more for the specific dependency's major version (unless you unignore this specific dependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this group update PR and stop Dependabot creating any more for the specific dependency's minor version (unless you unignore this specific dependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR and stop Dependabot creating any more for the specific dependency (unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore conditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will remove the ignore condition of the specified dependency and ignore conditions\n\n\n</details>",
+  "url": "https://github.com/ryckakas/crashcause/pull/3",
+  "state": "CLOSED",
+  "createdAt": "2026-08-03T07:17:15Z",
+  "author": {
+   "login": "dependabot",
+   "__typename": "Bot"
+  },
+  "files": {
+   "totalCount": 2,
+   "nodes": [
+    {
+     "path": "go.mod"
+    },
+    {
+     "path": "go.sum"
+    }
+   ]
+  },
+  "commits": {
+   "totalCount": 1,
+   "nodes": [
+    {
+     "commit": {
+      "messageHeadline": "Bump the kubernetes group with 3 updates",
+      "messageBody": "Bumps the kubernetes group with 3 updates: [k8s.io/apimachinery](https://github.com/kubernetes/apimachinery), [k8s.io/cli-runtime](https://github.com/kubernetes/cli-runtime) and [k8s.io/client-go](https://github.com/kubernetes/client-go).\n\n\nUpdates `k8s.io/apimachinery` from 0.31.4 to 0.36.3\n- [Commits](https://github.com/kubernetes/apimachinery/compare/v0.31.4...v0.36.3)\n\nUpdates `k8s.io/cli-runtime` from 0.31.4 to 0.36.3\n- [Commits](https://github.com/kubernetes/cli-runtime/compare/v0.31.4...v0.36.3)\n\nUpdates `k8s.io/client-go` from 0.31.4 to 0.36.3\n- [Changelog](https://github.com/kubernetes/client-go/blob/master/CHANGELOG.md)\n- [Commits](https://github.com/kubernetes/client-go/compare/v0.31.4...v0.36.3)\n\n---\nupdated-dependencies:\n- dependency-name: k8s.io/apimachinery\n  dependency-version: 0.36.3\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: kubernetes\n- dependency-name: k8s.io/cli-runtime\n  dependency-version: 0.36.3\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: kubernetes\n- dependency-name: k8s.io/client-go\n  dependency-version: 0.36.3\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: kubernetes\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>"
+     }
+    }
+   ]
+  },
+  "comments": {
+   "totalCount": 1,
+   "nodes": [
+    {
+     "author": {
+      "login": "dependabot",
+      "__typename": "Bot"
+     },
+     "body": "Looks like these dependencies are no longer being updated by Dependabot, so this is no longer needed.",
+     "createdAt": "2026-08-03T07:54:30Z"
+    }
+   ]
+  },
+  "reviews": {
+   "totalCount": 0,
+   "nodes": []
+  },
+  "reviewThreads": {
+   "totalCount": 0,
+   "nodes": []
+  }
+ },
+ {
+  "number": 15,
+  "title": "Prepare the v0.1.0 release",
+  "body": "Cut the CHANGELOG's Unreleased section as 0.1.0 and replace the pre-release claims in the README and chart README, which asserted there was no release, no downloadable binary and no chart distribution - all false the moment the tag is pushed.\r\n\r\nPublish the Helm chart as an OCI artifact to ghcr.io/ryckakas/charts in a new release job, chosen over a gh-pages chart repository so there is no index.yaml or Pages branch to keep consistent and so it reuses the ghcr credentials the release workflow already needs. The job is gated on goreleaser succeeding, and refuses to push a chart whose appVersion does not match the tag, since appVersion is the image tag the chart deploys by default.\r\n\r\nRenumber the chart from 0.1.1 to 0.1.0 so the first published chart matches its appVersion; 0.1.1 only ever existed pre-publication.\r\n\r\nNarrow the workflow's top-level permissions to contents:read and grant the write scopes per job instead.",
+  "url": "https://github.com/ryckakas/crashcause/pull/15",
+  "state": "MERGED",
+  "createdAt": "2026-08-03T13:03:04Z",
+  "author": {
+   "login": "ryckakas",
+   "__typename": "User"
+  },
+  "files": {
+   "totalCount": 6,
+   "nodes": [
+    {
+     "path": ".github/workflows/release.yml"
+    },
+    {
+     "path": "CHANGELOG.md"
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "charts/crashcause/Chart.yaml"
+    },
+    {
+     "path": "charts/crashcause/README.md"
+    },
+    {
+     "path": "deploy/krew/crashcause.yaml"
+    }
+   ]
+  },
+  "commits": {
+   "totalCount": 1,
+   "nodes": [
+    {
+     "commit": {
+      "messageHeadline": "Prepare the v0.1.0 release",
+      "messageBody": "Cut the CHANGELOG's Unreleased section as 0.1.0 and replace the\npre-release claims in the README and chart README, which asserted there\nwas no release, no downloadable binary and no chart distribution - all\nfalse the moment the tag is pushed.\n\nPublish the Helm chart as an OCI artifact to ghcr.io/ryckakas/charts in\na new release job, chosen over a gh-pages chart repository so there is\nno index.yaml or Pages branch to keep consistent and so it reuses the\nghcr credentials the release workflow already needs. The job is gated on\ngoreleaser succeeding, and refuses to push a chart whose appVersion does\nnot match the tag, since appVersion is the image tag the chart deploys\nby default.\n\nRenumber the chart from 0.1.1 to 0.1.0 so the first published chart\nmatches its appVersion; 0.1.1 only ever existed pre-publication.\n\nNarrow the workflow's top-level permissions to contents:read and grant\nthe write scopes per job instead.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+     }
+    }
+   ]
+  },
+  "comments": {
+   "totalCount": 0,
+   "nodes": []
+  },
+  "reviews": {
+   "totalCount": 0,
+   "nodes": []
+  },
+  "reviewThreads": {
+   "totalCount": 0,
+   "nodes": []
+  }
+ }
+]

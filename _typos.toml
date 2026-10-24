@@ -1,0 +1,3 @@
+[files]
+# Fixtures are third-party GitHub content, partly in German.
+extend-exclude = ["tests/fixtures/"]
