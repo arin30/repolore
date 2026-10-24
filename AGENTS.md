@@ -46,6 +46,9 @@ required status check on `main`, except `audit`:
 - `zizmor`, `actionlint`: workflow security and correctness, and shellcheck over `.githooks/`.
 - `audit`: `uv audit`. It runs on every PR but isn't required.
 
+CodeQL (Python and Actions) runs through GitHub's default setup, outside `ci.yml`. A ruleset rule
+blocks merging on an error-level alert or a high or critical security alert.
+
 Every action is pinned to a commit SHA with its version in a comment, and Dependabot moves both. A
 renamed or added job also needs `.github/rulesets/protect-main.json` updated and re-applied (see
 `.github/rulesets/README.md`).
