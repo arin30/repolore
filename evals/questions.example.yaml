@@ -1,0 +1,29 @@
+# Format of the eval question set. The real set lives in the config dir, not in this repo:
+# `repolore questions` prints where, and validates it. Copy this file there to start.
+#
+# kind: factual | rationale | cross-repo | commit-only | unanswerable
+# expected: the sources that answer the question, matched by URL (and optionally the section heading),
+#           never by chunk, so the set stays valid when chunking changes. Empty only for unanswerable questions.
+# holdout: true for the few questions that tuning decisions are never made on.
+
+questions:
+  - id: example-factual
+    question: "Which exit reason does the classifier treat as out of memory?"
+    kind: factual
+    expected:
+      - url: https://github.com/octo-org/example-repo/pull/12
+        section: Change
+    answer: "A container whose last termination reason is OOMKilled."
+
+  - id: example-rationale
+    question: "Why was the YAML config format dropped in favour of TOML?"
+    kind: rationale
+    expected:
+      - url: https://github.com/octo-org/example-repo/issues/4
+    answer: "TOML is in the standard library (tomllib), so it removed a dependency."
+    holdout: true
+
+  - id: example-unanswerable
+    question: "Which repo publishes to Kafka?"
+    kind: unanswerable
+    answer: "None of the indexed repos use Kafka."

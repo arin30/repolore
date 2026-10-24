@@ -33,6 +33,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check --output-format=github
       - run: uv run ruff format --check
+      - run: uv run bonsai-lint --format github
 
   typecheck:
     runs-on: ubuntu-latest
