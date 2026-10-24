@@ -28,6 +28,7 @@ Python 3.12 (pinned in `.python-version`), managed with uv. Code that opens file
 uv sync                     # install the project and dev tools from uv.lock
 uv run repolore --help      # the CLI
 uv run repolore ingest      # fetch the repos in repolore.toml into the raw cache; --offline rebuilds from it
+uv run repolore inspect     # chunk the cached documents: counts, token histogram, random samples
 uv run ruff format          # format
 uv run ruff check           # lint
 uv run pyright              # type-check (standard mode)
@@ -80,7 +81,10 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
   need the network. Local `.plans/` come later.
 - `documents.py` normalizes into `Document`s. Bots are filtered by GraphQL `author.__typename`,
   not by a login list. Deleted accounts become `ghost`.
-- `chunking.py`, `embedding/` (an `Embedder` protocol; local `voyage-4-nano` by default, Voyage's API
+- `chunking.py` splits each document's markdown at headings (markdown-it-py, top-level blocks only, so
+  a code fence or table is never cut), packs a long section into pieces of up to 400 estimated tokens, and
+  prefixes each chunk with a header like `owner/repo · PR #17 · <title> · <section>`.
+- `embedding/` (an `Embedder` protocol; local `voyage-4-nano` by default, Voyage's API
   optional), `store.py` (one SQLite file with sqlite-vec + FTS5; one DB file per pipeline config),
   `retrieval.py`, `evals/`, `mcp_server.py`, `cli.py`.
 - `evals/questions.py` loads the eval question set. The real set lives in the config dir

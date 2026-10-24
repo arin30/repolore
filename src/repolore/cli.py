@@ -1,4 +1,7 @@
+import io
 import logging
+import random
+import sys
 import tomllib
 from collections import Counter
 from pathlib import Path
@@ -9,6 +12,7 @@ import yaml
 from pydantic import ValidationError
 
 from repolore import __version__
+from repolore.chunking import MAX_TOKENS, Chunk, chunk_document
 from repolore.config import Config, load_config
 from repolore.documents import Document, DocumentKind
 from repolore.evals.questions import QuestionKind, load_questions
@@ -25,7 +29,15 @@ def main(
     data_dir: Annotated[Path | None, typer.Option(help="Override the data directory.")] = None,
 ) -> None:
     """RAG over your own engineering history."""
+    _use_utf8_output()
     ctx.obj = resolve_paths(data_dir)
+
+
+def _use_utf8_output() -> None:
+    # Redirected output on Windows defaults to cp1252, which can't encode emoji and most non-Latin GitHub content.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 @app.command()
@@ -108,3 +120,43 @@ def _print_counts(repos: list[str], documents: list[Document]) -> None:
         typer.echo(f"{repo:<{width}}" + "".join(f"{counts[repo.lower(), kind]:>8}" for kind in DocumentKind))
     totals = Counter(document.kind for document in documents)
     typer.echo(f"{'total':<{width}}" + "".join(f"{totals[kind]:>8}" for kind in DocumentKind))
+
+
+TOKEN_BUCKETS = (50, 100, 200, MAX_TOKENS, 2 * MAX_TOKENS)
+BAR_WIDTH = 40
+SAMPLE_CHARS = 600
+
+
+@app.command()
+def inspect(
+    ctx: typer.Context,
+    samples: Annotated[int, typer.Option(help="How many random chunks to print.")] = 3,
+    seed: Annotated[int | None, typer.Option(help="Seed for picking the samples, to see the same ones again.")] = None,
+) -> None:
+    """Chunk the cached documents and show chunk counts, a token-length histogram and random samples."""
+    paths: AppPaths = ctx.obj
+    config = _config_or_exit(paths.config_file)
+    try:
+        documents = ingest_repos(config.repos, paths.data_dir / "raw", None)
+    except FileNotFoundError as error:
+        typer.echo(f"No raw cache at {Path(error.filename).parent}; run `repolore ingest` first.", err=True)
+        raise typer.Exit(1) from None
+    chunks = [chunk for document in documents for chunk in chunk_document(document)]
+    typer.echo(f"{len(documents)} documents, {len(chunks)} chunks")
+    kinds = Counter(chunk.document.kind for chunk in chunks)
+    for kind in DocumentKind:
+        typer.echo(f"  {kind:<8} {kinds[kind]:>6}")
+    _print_histogram(chunks)
+    for chunk in random.Random(seed).sample(chunks, min(samples, len(chunks))):
+        typer.echo(f"\n--- {chunk.id} ({chunk.tokens} tokens)\n{chunk.embedded_text[:SAMPLE_CHARS]}")
+
+
+def _print_histogram(chunks: list[Chunk]) -> None:
+    counts = Counter(next((bucket for bucket in TOKEN_BUCKETS if chunk.tokens <= bucket), None) for chunk in chunks)
+    largest = max(counts.values(), default=1)
+    typer.echo("tokens (estimated)")
+    lower = 0
+    for bucket in [*TOKEN_BUCKETS, None]:
+        label = f"{lower + 1}-{bucket}" if bucket else f">{lower}"
+        typer.echo(f"  {label:>9} {counts[bucket]:>6} {'#' * round(BAR_WIDTH * counts[bucket] / largest)}")
+        lower = bucket or lower
