@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from conftest import FakeEmbedder
 from typer.testing import CliRunner
 
 from repolore import __version__, cli
@@ -180,3 +181,59 @@ def test_output_streams_that_are_not_files_are_left_alone(monkeypatch: pytest.Mo
     cli._use_utf8_output()
 
     assert sys.stdout is stdout
+
+
+@pytest.fixture
+def cached_crashcause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    data_dir = ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    shutil.copytree(FIXTURES / "crashcause", data_dir / "raw" / "ryckakas" / "crashcause")
+    monkeypatch.setattr("repolore.cli.LocalEmbedder", FakeEmbedder)
+    return data_dir
+
+
+def test_build_embeds_new_chunks_and_reuses_them_next_time(cached_crashcause: Path) -> None:
+    first = runner.invoke(app, ["build"])
+    second = runner.invoke(app, ["build", "--db", "experiment"])
+
+    assert first.exit_code == 0
+    assert "26 chunks indexed in" in first.output
+    assert "26 embedded, 0 reused" in first.output
+    assert "0 embedded, 26 reused" in second.output
+    assert (cached_crashcause / "db" / "experiment.db").exists()
+
+
+def test_search_prints_ranked_hits_with_links(cached_crashcause: Path) -> None:
+    runner.invoke(app, ["build"])
+
+    result = runner.invoke(app, ["search", "security context violation runAsNonRoot", "-k", "2", "--kind", "issue"])
+
+    assert result.exit_code == 0
+    assert result.output.startswith("1. ")
+    assert "\n   https://github.com/ryckakas/crashcause/issues/17\n" in result.output
+    assert "3. " not in result.output
+
+
+def test_search_with_filters_that_match_nothing(cached_crashcause: Path) -> None:
+    runner.invoke(app, ["build"])
+
+    result = runner.invoke(app, ["search", "anything", "--repo", "octo/missing", "--author", "nobody"])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == "No matches."
+
+
+def test_search_without_an_index_says_to_build(cached_crashcause: Path) -> None:
+    result = runner.invoke(app, ["search", "anything"])
+
+    assert result.exit_code == 1
+    assert "run `repolore build` first" in result.output
+
+
+def test_search_refuses_an_index_from_another_model(cached_crashcause: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner.invoke(app, ["build"])
+    monkeypatch.setattr(FakeEmbedder, "model_id", "other-model")
+
+    result = runner.invoke(app, ["search", "anything"])
+
+    assert result.exit_code == 1
+    assert "rebuild it" in result.output
