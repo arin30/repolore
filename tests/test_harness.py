@@ -11,7 +11,17 @@ DOC = "https://github.com/octo/repo/blob/main/README.md"
 
 def hit(url: str, score: float = 0.5, section: str | None = None) -> Hit:
     return Hit(
-        chunk_id=f"{url}::0", url=url, repo="octo/repo", kind="pr", section=section, header="h", text="t", score=score
+        chunk_id=f"{url}::0",
+        url=url,
+        repo="octo/repo",
+        kind="pr",
+        title="t",
+        section=section,
+        author=None,
+        created_at=None,
+        header="h",
+        text="t",
+        score=score,
     )
 
 

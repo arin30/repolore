@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ class LocalEmbedder:
 
     def __init__(self) -> None:
         self._model: SentenceTransformer | None = None
+        self._loading = threading.Lock()
 
     @property
     def model_id(self) -> str:
@@ -37,6 +39,11 @@ class LocalEmbedder:
         return np.asarray(self._loaded().encode_query(text, normalize_embeddings=True), dtype=np.float32)
 
     def _loaded(self) -> "SentenceTransformer":
+        # The MCP server runs tool calls on worker threads; parallel first searches must not load the model twice.
+        with self._loading:
+            return self._load_once()
+
+    def _load_once(self) -> "SentenceTransformer":
         if self._model is None:
             # Imported on first use: loading torch takes seconds, and most commands never embed anything.
             import torch
