@@ -18,13 +18,13 @@ release is out, the advisory is published with credit to you, unless you'd rathe
 ## What counts
 
 repolore reads a user's GitHub history with their own token, stores it in a local SQLite database,
-and sends text to the embedding and generation APIs the user configured. Anything that breaks
+and embeds it locally, or through Voyage's API if the user configured it. Anything that breaks
 those boundaries is in scope, for example:
 
 - A GitHub token, API key or other credential being logged, cached in the data directory, written
   into the index, or sent anywhere other than the API it belongs to.
 - Indexed content (PR bodies, issues, commits, docs) reaching anything other than the configured
-  embedding or generation API, or the local MCP client.
+  embedding API or the local MCP client.
 - Content from a repository the user can no longer access staying searchable after an ingest
   that should have removed it.
 - Crafted repository content (a PR body, a markdown file) causing code execution, or a read or

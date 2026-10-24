@@ -7,15 +7,16 @@ this repository. `CLAUDE.md` is a symlink to this file.
 
 `repolore` is a hand-built RAG pipeline over one person's engineering history on GitHub: PR bodies,
 review threads, issues, PR-less commits, repo markdown (`README`, `AGENTS.md`, `docs/**`) and local
-`.plans/` documents. It is searched from a Typer CLI (`search`, `ask`, `eval`) and served read-only
-to Claude Code through a stdio MCP server.
+`.plans/` documents. It is searched from a Typer CLI (`search`, `eval`) and served read-only
+to Claude Code through a stdio MCP server. Claude Code writes the answers; repolore itself calls no LLM.
 
 It is a **learning project first**: every stage (fetch, chunk, embed, retrieve, generate,
 evaluate) is written by hand so it stays visible. No LangChain, LlamaIndex, RAGAS or other
 RAG/eval frameworks. Prefer the approach that exposes how a stage works over one that hides it.
 
 It runs locally for a single user. Other people use it by running their own copy (`uvx` + `claude
-mcp add`) with their own GitHub token and embedding key. There is no hosted service and no GitHub App.
+mcp add`) with their own GitHub token. No model API key is needed: embeddings run locally by default, and
+Voyage's hosted API is an option. There is no hosted service and no GitHub App.
 
 ## Commands
 
@@ -29,8 +30,9 @@ uv run repolore --help      # the CLI
 uv run ruff format          # format
 uv run ruff check           # lint
 uv run pyright              # type-check (standard mode)
+uv run bonsai-lint          # cognitive complexity, threshold in bonsai-lint.toml
 uv run pytest               # offline tests; `live` tests are deselected
-uv run pytest -m live       # tests that call real GitHub / Voyage / Claude APIs, run by hand
+uv run pytest -m live       # tests that call real GitHub / Voyage APIs, run by hand
 uv run pytest --cov         # tests with the coverage floor CI enforces (90%, branch coverage)
 uv audit --locked --preview-features audit-command   # known advisories in uv.lock
 ```
@@ -39,7 +41,7 @@ Run format, lint, type-check and tests before considering a change done. CI
 (`.github/workflows/ci.yml`) runs the same gates plus a few that only run there. Each job is a
 required status check on `main`, except `audit`:
 
-- `lint`, `typecheck`: ruff check, ruff format --check, pyright.
+- `lint`, `typecheck`: ruff check, ruff format --check, bonsai-lint (cognitive complexity over 15 fails), pyright.
 - `test (ubuntu-latest)`, `test (windows-latest)`: pytest with the coverage floor.
 - `build`: builds the wheel and runs the installed `repolore` from it.
 - `typos`: spelling.
@@ -63,7 +65,7 @@ enable them once per clone with `git config core.hooksPath .githooks`. Work happ
 ## Architecture
 
 The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. Its decision log
-(D1–D22) is the reasoning behind everything below. The package grows into this layout
+(D1–D25) is the reasoning behind everything below. The package grows into this layout
 (`src/repolore/`), one module per pipeline stage:
 
 - `paths.py` resolves the per-user directories through `platformdirs`. Config is
@@ -74,9 +76,12 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
   Raw responses are cached under the data dir, so chunking and embedding never need the network.
 - `documents.py` normalizes into `Document`s. Bots are filtered by GraphQL `author.__typename`,
   not by a login list. Deleted accounts become `ghost`.
-- `chunking.py`, `embedding/` (an `Embedder` protocol with Voyage and local implementations),
-  `store.py` (one SQLite file with sqlite-vec + FTS5; one DB file per pipeline config),
-  `retrieval.py`, `generation.py`, `evals/`, `mcp_server.py`, `cli.py`.
+- `chunking.py`, `embedding/` (an `Embedder` protocol; local `voyage-4-nano` by default, Voyage's API
+  optional), `store.py` (one SQLite file with sqlite-vec + FTS5; one DB file per pipeline config),
+  `retrieval.py`, `evals/`, `mcp_server.py`, `cli.py`.
+- `evals/questions.py` loads the eval question set. The real set lives in the config dir
+  (`repolore questions` prints where) and is never committed, because it names private repos;
+  `evals/questions.example.yaml` shows the format.
 - `cli.py` is Typer wiring only. Logic lives in the stage modules.
 
 Only the MCP server is async. The rest of the pipeline is synchronous on purpose.
