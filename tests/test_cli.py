@@ -349,6 +349,10 @@ def test_eval_scores_saves_and_lists_misses(eval_questions: Path, cached_crashca
     assert lines[3].split() == ["recall@5", "0.500"]
     assert "  factual       0.500  (2)" in lines
     assert any(line.startswith("top score: ") for line in lines)
+    assert any(
+        line.startswith("search: median ") and line.endswith("over 24 chunks, query embedding included")
+        for line in lines
+    )
     assert "miss: missing-source: What did PR 999 change?" in result.output
     assert "  expected https://github.com/ryckakas/crashcause/pull/999 (rank >10)" in lines
     assert len(list((cached_crashcause / "evals" / "runs").glob("*.json"))) == 1
@@ -373,6 +377,17 @@ def test_eval_on_the_holdout_set(eval_questions: Path) -> None:
     assert result.exit_code == 0
     assert result.output.startswith("1 held-out questions on index default")
     assert "top score" not in result.output
+
+
+def test_eval_with_no_questions_in_the_set_reports_no_search_time(eval_questions: Path) -> None:
+    tuning_only = eval_questions.with_name("tuning-only.yaml")
+    tuning_only.write_text(eval_questions.read_text(encoding="utf-8").replace("holdout: true", ""), encoding="utf-8")
+
+    result = runner.invoke(app, ["eval", "--file", str(tuning_only), "--holdout"])
+
+    assert result.exit_code == 0
+    assert result.output.startswith("0 held-out questions")
+    assert "search: median" not in result.output
 
 
 def test_eval_without_an_index_says_to_build(cached_crashcause: Path) -> None:

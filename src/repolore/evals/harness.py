@@ -1,6 +1,7 @@
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from statistics import fmean
+from statistics import fmean, median
 
 from repolore.evals.metrics import first_ranks, ndcg_at, recall_at, reciprocal_rank
 from repolore.evals.questions import ExpectedSource, Question, QuestionKind
@@ -15,6 +16,7 @@ class QuestionResult:
     question: Question
     ranks: list[int | None]
     hits: list[Hit]
+    seconds: float = 0.0
 
     @property
     def answerable(self) -> bool:
@@ -29,12 +31,18 @@ class QuestionResult:
         return self.answerable and recall_at(self.ranks, 5) < 1
 
 
-def evaluate(questions: Iterable[Question], search: Callable[[str], list[Hit]]) -> list[QuestionResult]:
+def evaluate(
+    questions: Iterable[Question],
+    search: Callable[[str], list[Hit]],
+    clock: Callable[[], float] = time.perf_counter,
+) -> list[QuestionResult]:
     results = []
     for question in questions:
+        start = clock()
         hits = search(question.question)
+        seconds = clock() - start
         ranking = [_matching_source(hit, question.expected) for hit in hits]
-        results.append(QuestionResult(question, first_ranks(ranking, len(question.expected)), hits))
+        results.append(QuestionResult(question, first_ranks(ranking, len(question.expected)), hits, seconds))
     return results
 
 
@@ -67,6 +75,11 @@ def recall_by_kind(results: Sequence[QuestionResult]) -> dict[QuestionKind, tupl
         if result.answerable:
             by_kind.setdefault(result.question.kind, []).append(recall_at(result.ranks, 5))
     return {kind: (fmean(scores), len(scores)) for kind, scores in by_kind.items()}
+
+
+def median_search_ms(results: Sequence[QuestionResult]) -> float | None:
+    # The median, because the first search also pays for loading the model.
+    return median(result.seconds for result in results) * 1000 if results else None
 
 
 def mean_top_score(results: Sequence[QuestionResult], answerable: bool) -> float | None:

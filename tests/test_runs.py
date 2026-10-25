@@ -26,6 +26,7 @@ def test_run_record_keeps_config_metrics_and_per_question_ranks() -> None:
     assert run["config"] == {"index": "default", "questions": "abc:tuning"}
     assert run["metrics"]["recall@5"] == 1.0
     assert run["questions"] == [{"id": "q", "ranks": [1], "top_score": 0.75}]
+    assert run["search_ms"] >= 0
     assert run["timestamp"].endswith("+00:00")
 
 

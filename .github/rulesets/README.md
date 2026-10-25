@@ -3,7 +3,7 @@
 `protect-main.json` is the "Protect main" ruleset, applied to this repository. It blocks deleting
 or force-pushing the default branch, requires every change to go through a pull request (no
 direct pushes, no bypass, admins included), and requires the `lint`, `typecheck`,
-`test (ubuntu-latest)`, `test (windows-latest)`, `build`, `typos`, `zizmor` and `actionlint`
+`test (ubuntu-latest)`, `test (windows-latest)`, `test (macos-latest)`, `build`, `typos`, `zizmor` and `actionlint`
 checks from `.github/workflows/ci.yml` to pass before a PR can merge. `audit` runs on every PR
 but isn't required: a newly published advisory would otherwise block every PR, related or not. No
 required review count: solo repo, so that's just CI plus a PR.

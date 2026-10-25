@@ -33,6 +33,7 @@
           { "context": "typecheck" },
           { "context": "test (ubuntu-latest)" },
           { "context": "test (windows-latest)" },
+          { "context": "test (macos-latest)" },
           { "context": "build" },
           { "context": "typos" },
           { "context": "zizmor" },

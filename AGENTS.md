@@ -49,7 +49,7 @@ Run format, lint, type-check and tests before considering a change done. CI
 required status check on `main`, except `audit`:
 
 - `lint`, `typecheck`: ruff check, ruff format --check, bonsai-lint (cognitive complexity over 15 fails), pyright.
-- `test (ubuntu-latest)`, `test (windows-latest)`: pytest with the coverage floor.
+- `test (ubuntu-latest)`, `test (windows-latest)`, `test (macos-latest)`: pytest with the coverage floor.
 - `build`: builds the wheel and runs the installed `repolore` from it.
 - `typos`: spelling.
 - `zizmor`, `actionlint`: workflow security and correctness, and shellcheck over `.githooks/`.
@@ -119,7 +119,8 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
 - `evals/metrics.py` (recall@k, MRR, nDCG@10, hand-written and checked against ir-measures in the tests),
   `evals/harness.py` (runs the questions, matches hits to expected sources by URL and optional section) and
   `evals/runs.py` (each run saved under `<data-dir>/evals/runs/`, compared with the previous one on the same
-  questions). `EXPERIMENTS.md` logs every retrieval experiment, aggregate numbers only.
+  questions). A run also records the index size and the median search time per question, which is how search
+  latency is measured at a given corpus size. `EXPERIMENTS.md` logs every retrieval experiment, aggregate numbers only.
 - `mcp_server.py` serves `search` and `list_repos` to Claude Code over stdio (`repolore-mcp`, official `mcp` SDK
   v2 with `MCPServer`; the v1 `FastMCP` import no longer exists). It opens the index read-only per call, so
   `repolore build` can rewrite it meanwhile, and loads the model on the first search (about a minute here).
