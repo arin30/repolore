@@ -12,6 +12,9 @@ from typer.testing import CliRunner
 
 from repolore import __version__, cli
 from repolore.cli import app
+from repolore.config import Config
+from repolore.discovery import Discovery, RepoSource, Scope
+from repolore.documents import Document
 from repolore.paths import resolve_paths
 from repolore.sources.github import GitHubClient, GitHubError
 from repolore.store import connect, index_settings
@@ -74,7 +77,7 @@ def test_questions_reports_an_invalid_file(tmp_path: Path, content: str) -> None
     assert f"{path} is invalid" in result.output
 
 
-def ingest_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str | None) -> Path:
+def ingest_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str | None = None) -> Path:
     config_file = tmp_path / "repolore.toml"
     if config is not None:
         config_file.write_text(config, encoding="utf-8")
@@ -84,52 +87,55 @@ def ingest_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str | 
     return tmp_path
 
 
+def online(monkeypatch: pytest.MonkeyPatch, discovery: Discovery | None = None) -> list[Config]:
+    configs: list[Config] = []
+
+    def fake_discover(_: GitHubClient, config: Config) -> Discovery:
+        configs.append(config)
+        return discovery or Discovery(login="octocat", included=[], excluded=[])
+
+    monkeypatch.setattr("repolore.cli.resolve_token", lambda: "token")
+    monkeypatch.setattr("repolore.cli.discover", fake_discover)
+    return configs
+
+
 def test_offline_ingest_prints_counts_per_repo_and_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    data_dir = ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    data_dir = ingest_setup(tmp_path, monkeypatch)
     shutil.copytree(FIXTURES / "crashcause", data_dir / "raw" / "ryckakas" / "crashcause")
 
     result = runner.invoke(app, ["ingest", "--offline"])
 
     assert result.exit_code == 0
     lines = result.output.splitlines()
-    assert lines[0].split() == ["repo", "pr", "review", "issue", "commit", "doc"]
-    assert lines[1].split() == ["ryckakas/crashcause", "2", "0", "2", "1", "2"]
-    assert lines[2].split() == ["total", "2", "0", "2", "1", "2"]
+    assert lines[0].split() == ["repo", "pr", "review", "issue", "commit", "doc", "plan"]
+    assert lines[1].split() == ["ryckakas/crashcause", "2", "0", "2", "1", "2", "0"]
+    assert lines[2].split() == ["total", "2", "0", "2", "1", "2", "0"]
 
 
-def test_ingest_without_config_explains_how_to_create_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ingest_setup(tmp_path, monkeypatch, None)
-
-    result = runner.invoke(app, ["ingest", "--offline"])
-
-    assert result.exit_code == 1
-    assert 'repos = ["owner/name"]' in result.output
-
-
-@pytest.mark.parametrize("config", ["repos = [", "repos = []"])
-def test_ingest_with_invalid_config_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str) -> None:
+@pytest.mark.parametrize("config", ["include = [", 'repos = ["octo/repo"]'])
+def test_invalid_config_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str) -> None:
     ingest_setup(tmp_path, monkeypatch, config)
 
-    result = runner.invoke(app, ["ingest", "--offline"])
+    result = runner.invoke(app, ["ingest"])
 
     assert result.exit_code == 1
     assert "is invalid" in result.output
 
 
 def test_offline_ingest_without_cache_says_to_fetch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    ingest_setup(tmp_path, monkeypatch)
 
     result = runner.invoke(app, ["ingest", "--offline"])
 
     assert result.exit_code == 1
-    assert "without --offline" in result.output
+    assert "run `repolore ingest` first" in result.output
 
 
 def test_ingest_without_token_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def no_token() -> str:
         raise GitHubError("No GitHub token")
 
-    ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    ingest_setup(tmp_path, monkeypatch)
     monkeypatch.setattr("repolore.cli.resolve_token", no_token)
 
     result = runner.invoke(app, ["ingest"])
@@ -138,21 +144,75 @@ def test_ingest_without_token_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "No GitHub token" in result.output
 
 
-def test_online_ingest_closes_the_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_online_ingest_passes_the_discovery_and_closes_the_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     closed: list[bool] = []
-    ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
-    monkeypatch.setattr("repolore.cli.resolve_token", lambda: "token")
-    monkeypatch.setattr("repolore.cli.ingest_repos", lambda *_: [])
+    calls: list[tuple[Discovery, bool]] = []
+    discovery = Discovery(login="octocat", included=[RepoSource("octo/repo", Scope.OWNED)], excluded=[])
+    ingest_setup(tmp_path, monkeypatch, 'exclude = ["octo/old"]')
+    configs = online(monkeypatch, discovery)
+    monkeypatch.setattr("repolore.cli.ingest_repos", lambda found, _, __, full: calls.append((found, full)) or [])
     monkeypatch.setattr(GitHubClient, "close", lambda _: closed.append(True))
 
-    result = runner.invoke(app, ["ingest"])
+    result = runner.invoke(app, ["ingest", "--full"])
 
     assert result.exit_code == 0
+    assert configs == [Config(exclude=["octo/old"])]
+    assert calls == [(discovery, True)]
     assert closed == [True]
 
 
+def test_ingest_reports_github_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*_: object) -> list[Document]:
+        raise GitHubError("octo/repo: not found, or the token can't read it")
+
+    ingest_setup(tmp_path, monkeypatch)
+    online(monkeypatch)
+    monkeypatch.setattr("repolore.cli.ingest_repos", fail)
+
+    result = runner.invoke(app, ["ingest"])
+
+    assert result.exit_code == 1
+    assert "octo/repo: not found" in result.output
+
+
+def test_repos_lists_each_repo_with_its_scope_and_plans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    checkout = tmp_path / "repo"
+    discovery = Discovery(
+        login="octocat",
+        included=[
+            RepoSource("octocat/repo", Scope.OWNED, checkout),
+            RepoSource("other/project", Scope.CONTRIBUTED),
+        ],
+        excluded=[RepoSource("octocat/demo", Scope.OWNED), RepoSource("octocat/old", Scope.OWNED)],
+    )
+    ingest_setup(tmp_path, monkeypatch)
+    online(monkeypatch, discovery)
+
+    result = runner.invoke(app, ["repos"])
+
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    assert lines[0].split() == ["octocat/repo", "owned", "+", "plans", "in", str(checkout)]
+    assert lines[1].split() == ["other/project", "contributed"]
+    assert lines[2] == "2 repos for octocat"
+    assert lines[3].endswith("repolore.toml: octocat/demo, octocat/old")
+
+
+def test_repos_without_a_config_uses_the_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ingest_setup(tmp_path, monkeypatch)
+    configs = online(monkeypatch)
+
+    result = runner.invoke(app, ["repos"])
+
+    assert result.exit_code == 0
+    assert configs == [Config()]
+    assert result.output == "0 repos for octocat\n"
+
+
 def test_inspect_shows_counts_histogram_and_samples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    data_dir = ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    data_dir = ingest_setup(tmp_path, monkeypatch)
     shutil.copytree(FIXTURES / "crashcause", data_dir / "raw" / "ryckakas" / "crashcause")
 
     result = runner.invoke(app, ["inspect", "--samples", "2", "--seed", "1"])
@@ -160,15 +220,15 @@ def test_inspect_shows_counts_histogram_and_samples(tmp_path: Path, monkeypatch:
     assert result.exit_code == 0
     lines = [line.split() for line in result.output.splitlines()]
     assert lines[0] == ["7", "documents,", "24", "chunks"]
-    assert lines[1:6] == [["pr", "5"], ["review", "0"], ["issue", "15"], ["commit", "1"], ["doc", "3"]]
-    assert lines[6] == ["tokens", "(estimated)"]
-    assert [line[0] for line in lines[7:13]] == ["1-50", "51-100", "101-200", "201-400", "401-800", ">800"]
-    assert sum(int(line[1]) for line in lines[7:13]) == 24
+    assert lines[1:7] == [["pr", "5"], ["review", "0"], ["issue", "15"], ["commit", "1"], ["doc", "3"], ["plan", "0"]]
+    assert lines[7] == ["tokens", "(estimated)"]
+    assert [line[0] for line in lines[8:14]] == ["1-50", "51-100", "101-200", "201-400", "401-800", ">800"]
+    assert sum(int(line[1]) for line in lines[8:14]) == 24
     assert result.output.count("\n--- https://github.com/ryckakas/crashcause/") == 2
 
 
 def test_inspect_without_cache_says_to_ingest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    ingest_setup(tmp_path, monkeypatch)
 
     result = runner.invoke(app, ["inspect"])
 
@@ -188,7 +248,7 @@ def test_output_streams_that_are_not_files_are_left_alone(monkeypatch: pytest.Mo
 
 @pytest.fixture
 def cached_crashcause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    data_dir = ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
+    data_dir = ingest_setup(tmp_path, monkeypatch)
     shutil.copytree(FIXTURES / "crashcause", data_dir / "raw" / "ryckakas" / "crashcause")
     monkeypatch.setattr("repolore.cli.LocalEmbedder", lambda *_: FakeEmbedder())
     monkeypatch.setattr("repolore.cli.embedder_for", lambda _: FakeEmbedder())
