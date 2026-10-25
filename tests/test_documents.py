@@ -228,6 +228,15 @@ def test_bot_review_thread_is_dropped() -> None:
     assert DocumentKind.REVIEW not in kinds
 
 
+def test_bot_review_thread_is_kept_when_asked_for() -> None:
+    pull = copy.deepcopy(OPENWB_854)
+    pull["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]["author"] = {"login": "coderabbitai", "__typename": "Bot"}
+
+    reviews = [d for d in documents_from(openwb(pull), include_bot_reviews=True) if d.kind is DocumentKind.REVIEW]
+
+    assert [review.author for review in reviews] == ["coderabbitai"]
+
+
 def test_external_pull_request_carries_its_discussion() -> None:
     pull = by_url(documents_from(openwb()), "https://github.com/openWB/openwb-ui-settings/pull/854")
 
