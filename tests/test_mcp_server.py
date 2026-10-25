@@ -1,5 +1,6 @@
 import sys
 from contextlib import closing
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,15 @@ async def test_tools_are_listed_as_read_only(index_file: Path, fake_embedder: Fa
     assert set(tools) == {"search", "list_repos"}
     assert all(tool.annotations and tool.annotations.read_only_hint for tool in tools.values())
     assert set(tools["search"].input_schema["properties"]) == {"query", "repo", "kind", "author", "k"}
+
+
+async def test_initialize_reports_installed_package_version(index_file: Path, fake_embedder: FakeEmbedder) -> None:
+    async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
+        server_info = client.server_info
+
+    assert server_info is not None
+    assert server_info.name == "repolore"
+    assert server_info.version == version("repolore")
 
 
 async def test_search_returns_ranked_passages_with_permalinks(index_file: Path, fake_embedder: FakeEmbedder) -> None:

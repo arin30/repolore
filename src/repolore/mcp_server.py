@@ -1,6 +1,7 @@
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated
 
@@ -55,7 +56,7 @@ class Repos(BaseModel):
 
 
 def create_server(index_file: Path, embedder_for: Callable[[str], Embedder]) -> MCPServer:
-    server = MCPServer("repolore", instructions=INSTRUCTIONS)
+    server = MCPServer("repolore", version=version("repolore"), instructions=INSTRUCTIONS)
 
     @server.tool(annotations=READ_ONLY)
     def search(
