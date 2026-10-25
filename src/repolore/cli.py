@@ -143,8 +143,8 @@ def _github() -> Iterator[GitHubClient]:
         raise typer.Exit(1) from None
 
 
-def _cached_documents(paths: AppPaths) -> list[Document]:
-    documents = cached_documents(paths.raw_dir)
+def _cached_documents(paths: AppPaths, include_bot_reviews: bool = False) -> list[Document]:
+    documents = cached_documents(paths.raw_dir, include_bot_reviews)
     if not documents:
         typer.echo(f"Nothing cached in {paths.raw_dir}; run `repolore ingest` first.", err=True)
         raise typer.Exit(1)
@@ -219,14 +219,18 @@ def build(
         int | None, typer.Option(min=1, help="Split sections longer than this many tokens; by default they stay whole.")
     ] = None,
     embedder: Annotated[ModelName, typer.Option(help="Local embedding model.")] = ModelName.VOYAGE_NANO,
+    bot_reviews: Annotated[
+        bool, typer.Option(help="Also index review threads started by bots such as CodeRabbit or Copilot.")
+    ] = False,
 ) -> None:
     """Chunk the cached documents, embed what changed and write the search index."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     paths: AppPaths = ctx.obj
-    chunks = [chunk for document in _cached_documents(paths) for chunk in chunk_document(document, max_tokens)]
+    documents = _cached_documents(paths, bot_reviews)
+    chunks = [chunk for document in documents for chunk in chunk_document(document, max_tokens)]
     index_file = paths.index_file(db)
     with closing(connect(index_file)) as index, closing(connect(paths.embedding_cache)) as cache:
-        settings = {"max_tokens": str(max_tokens or "whole")}
+        settings = {"max_tokens": str(max_tokens or "whole"), "bot_reviews": "included" if bot_reviews else "excluded"}
         stats = build_index(chunks, LocalEmbedder(MODELS[embedder]), index, EmbeddingCache(cache), settings)
     typer.echo(
         f"{stats.chunks} chunks indexed in {index_file}, {stats.embedded} embedded, "
@@ -305,6 +309,7 @@ def eval_(
         "index": db,
         "model_id": settings["model_id"],
         "max_tokens": settings.get("max_tokens"),
+        "bot_reviews": settings.get("bot_reviews", "excluded"),
         "chunks": chunks,
         "retrieval": f"{mode}+rerank" if rerank else str(mode),
         "k": SEARCH_DEPTH,

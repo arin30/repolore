@@ -31,7 +31,8 @@ uv run repolore repos       # list the discovered repos and why each is in (owne
 uv run repolore ingest      # fetch what changed in them into the raw cache; --full refetches, --offline rereads it
 uv run repolore inspect     # chunk the cached documents: counts, token histogram, random samples
 uv run repolore build       # embed what changed and write the index (<data-dir>/db/default.db; --db names another,
-                            # --max-tokens splits long sections, --embedder picks the model)
+                            # --max-tokens splits long sections, --embedder picks the model,
+                            # --bot-reviews keeps review threads started by bots)
 uv run repolore search "…"  # best chunks, with --repo, --kind, --author, -k, --mode, --rerank
 uv run repolore eval        # score retrieval on the eval questions; --mode, --rerank, --show-misses, --holdout
 uv run ruff format          # format
@@ -72,7 +73,7 @@ enable them once per clone with `git config core.hooksPath .githooks`. Work happ
 ## Architecture
 
 The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. Its decision log
-(D1–D26) is the reasoning behind everything below. The package grows into this layout
+(D1–D27) is the reasoning behind everything below. The package grows into this layout
 (`src/repolore/`), one module per pipeline stage:
 
 - `paths.py` resolves the per-user directories through `platformdirs`. Config is
@@ -97,7 +98,8 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
   both logged, so `build` removes them from the index. Deleted PRs and issues, and default-branch history that was
   rewritten or merged with older commit dates, need `ingest --full`.
 - `documents.py` normalizes into `Document`s. Bots are filtered by GraphQL `author.__typename`,
-  not by a login list. Deleted accounts become `ghost`. Plans are private `plan` documents with `file://` URLs.
+  not by a login list. Deleted accounts become `ghost`. Review threads a bot started are dropped unless the index
+  is built with `--bot-reviews`. Plans are private `plan` documents with `file://` URLs.
 - `chunking.py` splits each document's markdown at headings (markdown-it-py, top-level blocks only, so
   a code fence or table is never cut), keeps each section whole (with `max_tokens`, splits longer ones between
   blocks), and prefixes each chunk with a header like `owner/repo · PR #17 · <title> · <section>`.

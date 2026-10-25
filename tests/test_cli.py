@@ -416,6 +416,15 @@ def test_build_with_smaller_chunks_records_the_setting(cached_crashcause: Path) 
     assert int(result.output.split(" chunks indexed")[0]) > 26
     with closing(connect(cached_crashcause / "db" / "small.db")) as db:
         assert index_settings(db)["max_tokens"] == "50"
+        assert index_settings(db)["bot_reviews"] == "excluded"
+
+
+def test_build_with_bot_reviews_records_the_setting(cached_crashcause: Path) -> None:
+    result = runner.invoke(app, ["build", "--db", "bots", "--bot-reviews"])
+
+    assert result.exit_code == 0
+    with closing(connect(cached_crashcause / "db" / "bots.db")) as db:
+        assert index_settings(db)["bot_reviews"] == "included"
 
 
 def test_eval_records_the_index_settings(eval_questions: Path, cached_crashcause: Path) -> None:
@@ -424,4 +433,5 @@ def test_eval_records_the_index_settings(eval_questions: Path, cached_crashcause
     [run_file] = (cached_crashcause / "evals" / "runs").glob("*.json")
     config = json.loads(run_file.read_text(encoding="utf-8"))["config"]
     assert config["max_tokens"] == "whole"
+    assert config["bot_reviews"] == "excluded"
     assert config["retrieval"] == "hybrid"

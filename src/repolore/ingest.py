@@ -23,11 +23,11 @@ def ingest(discovery: Discovery, raw_dir: Path, client: GitHubClient, full: bool
     return cached_documents(raw_dir)
 
 
-def cached_documents(raw_dir: Path) -> list[Document]:
+def cached_documents(raw_dir: Path, include_bot_reviews: bool = False) -> list[Document]:
     documents: list[Document] = []
     for directory in _repo_dirs(raw_dir):
         if RawRepo.is_cached(directory):
-            documents += documents_from(RawRepo.load(directory))
+            documents += documents_from(RawRepo.load(directory), include_bot_reviews)
         documents += plan_documents(_repo_name(directory), load_plans(directory))
     return documents
 
