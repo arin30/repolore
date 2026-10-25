@@ -1,6 +1,6 @@
 import pytest
 
-from repolore.evals.harness import evaluate, mean_top_score, recall_by_kind, summarize
+from repolore.evals.harness import evaluate, mean_top_score, median_search_ms, recall_by_kind, summarize
 from repolore.evals.questions import Question, QuestionKind
 from repolore.store import Hit
 
@@ -85,3 +85,17 @@ def test_recall_is_broken_down_by_kind() -> None:
     results = evaluate(questions, search_returning({"a": [hit(PR)], "b": [hit(PR)], "c": []}))
 
     assert recall_by_kind(results) == {QuestionKind.FACTUAL: (1.0, 1), QuestionKind.RATIONALE: (0.5, 2)}
+
+
+def test_search_time_is_the_median_so_the_cold_first_search_does_not_skew_it() -> None:
+    ticks = iter([0.0, 60.0, 60.0, 60.02, 60.02, 60.05])
+    questions = [question("a"), question("b"), question("c")]
+
+    results = evaluate(questions, search_returning({"a": [], "b": [], "c": []}), clock=lambda: next(ticks))
+
+    assert [result.seconds for result in results] == pytest.approx([60.0, 0.02, 0.03])
+    assert median_search_ms(results) == pytest.approx(30.0)
+
+
+def test_no_questions_means_no_search_time() -> None:
+    assert median_search_ms([]) is None

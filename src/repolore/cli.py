@@ -20,7 +20,15 @@ from repolore.config import Config, load_config
 from repolore.discovery import discover
 from repolore.documents import Document, DocumentKind
 from repolore.embedding.local import MODELS, LocalEmbedder, ModelName, UnknownModelError, embedder_for
-from repolore.evals.harness import METRICS, SEARCH_DEPTH, QuestionResult, evaluate, mean_top_score, recall_by_kind
+from repolore.evals.harness import (
+    METRICS,
+    SEARCH_DEPTH,
+    QuestionResult,
+    evaluate,
+    mean_top_score,
+    median_search_ms,
+    recall_by_kind,
+)
 from repolore.evals.questions import QuestionKind, QuestionSet, load_questions
 from repolore.evals.runs import previous_run, run_record, save_run
 from repolore.indexing import build_index
@@ -31,7 +39,16 @@ from repolore.reranking import CrossEncoderReranker
 from repolore.retrieval import Mode
 from repolore.retrieval import search as search_index
 from repolore.sources.github import GitHubClient, GitHubError, resolve_token
-from repolore.store import EmbeddingCache, Filters, StoreError, connect, index_model, index_settings, indexed_urls
+from repolore.store import (
+    EmbeddingCache,
+    Filters,
+    StoreError,
+    connect,
+    index_model,
+    index_settings,
+    indexed_urls,
+    repo_counts,
+)
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -279,6 +296,7 @@ def eval_(
             settings = index_settings(index)
             embedder = embedder_for(settings["model_id"])
             missing = {source.url for q in questions for source in q.expected} - indexed_urls(index)
+            chunks = sum(sum(kinds.values()) for kinds in repo_counts(index).values())
             reranker = CrossEncoderReranker() if rerank else None
             results = evaluate(
                 questions, lambda text: search_index(index, embedder, text, SEARCH_DEPTH, Filters(), mode, reranker)
@@ -292,6 +310,7 @@ def eval_(
         "model_id": settings["model_id"],
         "max_tokens": settings.get("max_tokens"),
         "bot_reviews": settings.get("bot_reviews", "excluded"),
+        "chunks": chunks,
         "retrieval": f"{mode}+rerank" if rerank else str(mode),
         "k": SEARCH_DEPTH,
         "questions": fingerprint,
@@ -307,6 +326,8 @@ def eval_(
         typer.echo(f"  not in the index: {url}")
     _print_metrics(run["metrics"], previous["metrics"] if previous else None)
     _print_breakdown(results)
+    if (search_ms := median_search_ms(results)) is not None:
+        typer.echo(f"search: median {search_ms:.0f} ms per query over {chunks:,} chunks, query embedding included")
     if show_misses:
         _print_misses(results)
     typer.echo(f"run saved to {save_run(runs_dir, run)}")

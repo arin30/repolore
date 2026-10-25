@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from repolore.evals.harness import QuestionResult, summarize
+from repolore.evals.harness import QuestionResult, median_search_ms, summarize
 
 Run = dict[str, Any]
 
@@ -14,6 +14,7 @@ def run_record(config: dict[str, Any], results: Sequence[QuestionResult]) -> Run
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "config": config,
         "metrics": summarize(results),
+        "search_ms": median_search_ms(results),
         "questions": [
             {"id": result.question.id, "ranks": result.ranks, "top_score": result.top_score} for result in results
         ],
