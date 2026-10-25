@@ -1,5 +1,5 @@
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Annotated
@@ -12,10 +12,10 @@ from pydantic import BaseModel, Field
 
 from repolore.documents import DocumentKind
 from repolore.embedding import Embedder
-from repolore.embedding.local import LocalEmbedder
+from repolore.embedding.local import UnknownModelError, embedder_for
 from repolore.paths import resolve_paths
 from repolore.retrieval import search as search_index
-from repolore.store import Filters, Hit, StoreError, connect_read_only, repo_counts
+from repolore.store import Filters, Hit, StoreError, connect_read_only, index_model, repo_counts
 
 TEXT_CHARS = 1500
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -54,7 +54,7 @@ class Repos(BaseModel):
     repos: list[Repo]
 
 
-def create_server(index_file: Path, embedder: Embedder) -> MCPServer:
+def create_server(index_file: Path, embedder_for: Callable[[str], Embedder]) -> MCPServer:
     server = MCPServer("repolore", instructions=INSTRUCTIONS)
 
     @server.tool(annotations=READ_ONLY)
@@ -68,8 +68,9 @@ def create_server(index_file: Path, embedder: Embedder) -> MCPServer:
         """Find the passages closest in meaning to the query, best first, with permalinks."""
         with _open(index_file) as db:
             try:
+                embedder = embedder_for(index_model(db)[0])
                 hits = search_index(db, embedder, query, k, Filters(repo=repo, kind=kind, author=author))
-            except StoreError as error:
+            except (StoreError, UnknownModelError) as error:
                 raise ToolError(str(error)) from error
         return SearchResults(query=query, results=[_result(hit) for hit in hits])
 
@@ -110,7 +111,7 @@ def serve(
     db: Annotated[str, typer.Option(help="Name of the index to serve.")] = "default",
 ) -> None:
     """Serve search over the repolore index to an MCP client on stdin and stdout."""
-    create_server(resolve_paths(data_dir).index_file(db), LocalEmbedder()).run()
+    create_server(resolve_paths(data_dir).index_file(db), embedder_for).run()
 
 
 def main() -> None:

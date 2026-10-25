@@ -2,10 +2,11 @@ from datetime import UTC, datetime
 
 import pytest
 
-from repolore.chunking import MAX_TOKENS, Section, chunk_document, estimate_tokens, split_markdown
+from repolore.chunking import Section, chunk_document, estimate_tokens, split_markdown
 from repolore.documents import Document, DocumentKind, Visibility
 
 FENCE = "```"
+LIMIT = 400
 
 
 def document(kind: DocumentKind = DocumentKind.PR, body: str = "Body.", **changes: object) -> Document:
@@ -54,28 +55,34 @@ def test_heading_without_content_is_skipped() -> None:
 def test_oversized_section_is_split_between_blocks() -> None:
     blocks = [paragraph(150, word=f"w{n}") for n in range(5)]
 
-    sections = split_markdown("## Notes\n\n" + "\n\n".join(blocks))
+    sections = split_markdown("## Notes\n\n" + "\n\n".join(blocks), LIMIT)
 
     assert len(sections) > 1
     assert {section.heading for section in sections} == {"Notes"}
-    assert all(estimate_tokens(section.text) <= MAX_TOKENS for section in sections)
+    assert all(estimate_tokens(section.text) <= LIMIT for section in sections)
     assert "\n\n".join(section.text for section in sections).endswith(blocks[-1])
 
 
 def test_section_exactly_at_the_limit_stays_whole() -> None:
-    text = "a" * (MAX_TOKENS * 4)
+    text = "a" * (LIMIT * 4)
 
-    assert split_markdown(text) == [Section(None, text)]
+    assert split_markdown(text, LIMIT) == [Section(None, text)]
 
 
 def test_code_fence_is_never_split_or_read_as_headings() -> None:
     fence = f"{FENCE}sh\n# not a heading\n" + "\n".join(f"echo {n}" * 20 for n in range(40)) + f"\n{FENCE}"
 
-    sections = split_markdown(f"## Usage\n\nRun:\n\n{fence}\n\nDone.")
+    sections = split_markdown(f"## Usage\n\nRun:\n\n{fence}\n\nDone.", LIMIT)
 
     assert [section.heading for section in sections] == ["Usage", "Usage", "Usage"]
     assert sections[1].text == fence
-    assert estimate_tokens(fence) > MAX_TOKENS
+    assert estimate_tokens(fence) > LIMIT
+
+
+def test_sections_stay_whole_by_default() -> None:
+    blocks = [paragraph(300, word=f"w{n}") for n in range(3)]
+
+    assert len(split_markdown("## Notes\n\n" + "\n\n".join(blocks))) == 1
 
 
 def test_table_stays_one_block() -> None:
@@ -145,3 +152,10 @@ def test_document_without_body_is_one_chunk_of_its_title() -> None:
 
 def test_estimate_rounds_up() -> None:
     assert [estimate_tokens(text) for text in ["", "a", "abcd", "abcde"]] == [0, 1, 1, 2]
+
+
+def test_max_tokens_controls_where_long_sections_split() -> None:
+    body = "## Notes\n\n" + "\n\n".join(paragraph(60, word=f"w{n}") for n in range(4))
+
+    assert len(chunk_document(document(body=body))) == 1
+    assert len(chunk_document(document(body=body), max_tokens=100)) == 4

@@ -1,5 +1,8 @@
 import threading
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
+from functools import cache
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -9,27 +12,65 @@ from repolore.embedding import Vectors
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
-MODEL = "voyageai/voyage-4-nano"
-# The model runs its own code (trust_remote_code), so it is pinned to a reviewed commit.
-REVISION = "5fb34e870f49f19e79c94d5e118f5ee730133279"
-DIM = 1024
 BATCH_SIZE = 16
 
 
-class LocalEmbedder:
-    """voyage-4-nano on the CPU, in the same embedding space as Voyage's hosted voyage-4 models."""
+@dataclass(frozen=True)
+class LocalModel:
+    name: str
+    revision: str
+    dim: int
+    trust_remote_code: bool = False
+    prompts: dict[str, str] = field(default_factory=dict)
 
-    def __init__(self) -> None:
+    @property
+    def model_id(self) -> str:
+        return f"{self.name}@{self.revision[:12]}"
+
+
+VOYAGE_NANO = LocalModel(
+    name="voyageai/voyage-4-nano",
+    # The model runs its own code (trust_remote_code), so it is pinned to a reviewed commit.
+    revision="5fb34e870f49f19e79c94d5e118f5ee730133279",
+    dim=1024,
+    trust_remote_code=True,
+)
+BGE_SMALL = LocalModel(
+    name="BAAI/bge-small-en-v1.5",
+    revision="5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+    dim=384,
+    # The model card's query instruction; the checkpoint doesn't ship it as a saved prompt.
+    prompts={"query": "Represent this sentence for searching relevant passages: "},
+)
+
+
+class ModelName(StrEnum):
+    VOYAGE_NANO = "voyage-4-nano"
+    BGE_SMALL = "bge-small"
+
+
+MODELS = {ModelName.VOYAGE_NANO: VOYAGE_NANO, ModelName.BGE_SMALL: BGE_SMALL}
+
+
+class UnknownModelError(Exception):
+    pass
+
+
+class LocalEmbedder:
+    """A sentence-transformers model on the CPU. The default, voyage-4-nano, shares Voyage's hosted embedding space."""
+
+    def __init__(self, model: LocalModel = VOYAGE_NANO) -> None:
+        self._spec = model
         self._model: SentenceTransformer | None = None
         self._loading = threading.Lock()
 
     @property
     def model_id(self) -> str:
-        return f"{MODEL}@{REVISION[:12]}"
+        return self._spec.model_id
 
     @property
     def dim(self) -> int:
-        return DIM
+        return self._spec.dim
 
     def embed_documents(self, texts: Sequence[str]) -> Vectors:
         vectors = self._loaded().encode_document(list(texts), batch_size=BATCH_SIZE, normalize_embeddings=True)
@@ -49,13 +90,24 @@ class LocalEmbedder:
             import torch
             from sentence_transformers import SentenceTransformer
 
-            # The checkpoint is BF16, which CPUs without native BF16 math run about 9x slower than float32.
+            spec = self._spec
+            # BF16 checkpoints run about 9x slower than float32 on CPUs without native BF16 math.
             self._model = SentenceTransformer(
-                MODEL,
-                revision=REVISION,
-                trust_remote_code=True,
-                truncate_dim=DIM,
+                spec.name,
+                revision=spec.revision,
+                trust_remote_code=spec.trust_remote_code,
+                truncate_dim=spec.dim,
+                prompts=spec.prompts or None,
                 device="cpu",
                 model_kwargs={"dtype": torch.float32},
             )
         return self._model
+
+
+@cache
+def embedder_for(model_id: str) -> LocalEmbedder:
+    """The embedder an index was built with, so queries land in its vector space; one per model, loaded once."""
+    for spec in MODELS.values():
+        if spec.model_id == model_id:
+            return LocalEmbedder(spec)
+    raise UnknownModelError(f"The index was built with {model_id}, which repolore can't load; rebuild it.")

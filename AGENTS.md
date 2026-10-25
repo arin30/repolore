@@ -29,9 +29,10 @@ uv sync                     # install the project and dev tools from uv.lock
 uv run repolore --help      # the CLI
 uv run repolore ingest      # fetch the repos in repolore.toml into the raw cache; --offline rebuilds from it
 uv run repolore inspect     # chunk the cached documents: counts, token histogram, random samples
-uv run repolore build       # embed what changed and write the index (<data-dir>/db/default.db; --db names another)
-uv run repolore search "…"  # nearest chunks, with --repo, --kind, --author, -k
-uv run repolore eval        # score retrieval on the eval questions; --show-misses, --holdout
+uv run repolore build       # embed what changed and write the index (<data-dir>/db/default.db; --db names another,
+                            # --max-tokens splits long sections, --embedder picks the model)
+uv run repolore search "…"  # best chunks, with --repo, --kind, --author, -k, --mode, --rerank
+uv run repolore eval        # score retrieval on the eval questions; --mode, --rerank, --show-misses, --holdout
 uv run ruff format          # format
 uv run ruff check           # lint
 uv run pyright              # type-check (standard mode)
@@ -85,16 +86,20 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
 - `documents.py` normalizes into `Document`s. Bots are filtered by GraphQL `author.__typename`,
   not by a login list. Deleted accounts become `ghost`.
 - `chunking.py` splits each document's markdown at headings (markdown-it-py, top-level blocks only, so
-  a code fence or table is never cut), packs a long section into pieces of up to 400 estimated tokens, and
-  prefixes each chunk with a header like `owner/repo · PR #17 · <title> · <section>`.
-- `embedding/` has the `Embedder` protocol and `LocalEmbedder`: `voyage-4-nano` through
-  sentence-transformers, on the CPU in float32, 1024 dimensions, pinned to a reviewed model revision
-  because it runs the model's own code. torch comes from PyTorch's CPU index (`[tool.uv.sources]`);
-  PyPI's Linux wheel bundles gigabytes of CUDA.
+  a code fence or table is never cut), keeps each section whole (with `max_tokens`, splits longer ones between
+  blocks), and prefixes each chunk with a header like `owner/repo · PR #17 · <title> · <section>`.
+- `embedding/` has the `Embedder` protocol and `LocalEmbedder` over sentence-transformers on the CPU in float32.
+  The default model is `voyage-4-nano` (1024 dimensions, pinned to a reviewed revision because it runs the
+  model's own code); `bge-small` is the smaller alternative. An index records its model, and `embedder_for` picks
+  the matching one for search. torch comes from PyTorch's CPU index (`[tool.uv.sources]`); PyPI's Linux wheel
+  bundles gigabytes of CUDA.
 - `store.py` writes one SQLite file per index: `chunks`, a sqlite-vec `vec0` table filtered by repo,
   kind and author inside the KNN query, and an FTS5 table. `EmbeddingCache` (`<data-dir>/cache/embeddings.db`)
   keys vectors by model and chunk text, so every index reuses them and a rebuild embeds only changed chunks.
-- `indexing.py` builds an index; `retrieval.py` searches one and refuses an index built with another model.
+- `indexing.py` builds an index. `retrieval.py` searches one in `vector`, `keyword` (FTS5 BM25) or `hybrid` mode
+  (reciprocal rank fusion), optionally reranked by `reranking.py`'s local cross-encoder. The defaults (vector,
+  whole sections, no reranking) come from the experiments in `EXPERIMENTS.md`; change them only with a measured
+  `repolore eval` result.
 - `evals/questions.py` loads the eval question set. The real set lives in the config dir
   (`repolore questions` prints where) and is never committed, because it names private repos;
   `evals/questions.example.yaml` shows the format.

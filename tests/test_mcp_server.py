@@ -31,7 +31,7 @@ def index_file(tmp_path: Path, corpus: list[Chunk], fake_embedder: FakeEmbedder)
 
 
 async def test_tools_are_listed_as_read_only(index_file: Path, fake_embedder: FakeEmbedder) -> None:
-    async with Client(create_server(index_file, fake_embedder)) as client:
+    async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
     assert set(tools) == {"search", "list_repos"}
@@ -40,7 +40,7 @@ async def test_tools_are_listed_as_read_only(index_file: Path, fake_embedder: Fa
 
 
 async def test_search_returns_ranked_passages_with_permalinks(index_file: Path, fake_embedder: FakeEmbedder) -> None:
-    async with Client(create_server(index_file, fake_embedder)) as client:
+    async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
         result = await client.call_tool("search", {"query": "solar battery Modbus", "k": 2})
 
     assert not result.is_error
@@ -63,7 +63,7 @@ async def test_search_returns_ranked_passages_with_permalinks(index_file: Path, 
 
 
 async def test_search_filters(index_file: Path, fake_embedder: FakeEmbedder) -> None:
-    async with Client(create_server(index_file, fake_embedder)) as client:
+    async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
         result = await client.call_tool("search", {"query": "registry", "kind": "doc"})
 
     assert result.structured_content is not None
@@ -82,7 +82,7 @@ async def test_long_passages_are_shortened(
             db, chunks, fake_embedder.embed_documents([c.embedded_text for c in chunks]), "fake-bag-of-words", 64
         )
 
-    async with Client(create_server(path, fake_embedder)) as client:
+    async with Client(create_server(path, lambda _: fake_embedder)) as client:
         result = await client.call_tool("search", {"query": "word"})
 
     assert result.structured_content is not None
@@ -92,14 +92,14 @@ async def test_long_passages_are_shortened(
 
 
 async def test_out_of_range_k_is_an_error_the_model_can_read(index_file: Path, fake_embedder: FakeEmbedder) -> None:
-    async with Client(create_server(index_file, fake_embedder)) as client:
+    async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
         result = await client.call_tool("search", {"query": "x", "k": 99})
 
     assert result.is_error
 
 
 async def test_missing_index_says_how_to_build_it(tmp_path: Path, fake_embedder: FakeEmbedder) -> None:
-    async with Client(create_server(tmp_path / "missing.db", fake_embedder)) as client:
+    async with Client(create_server(tmp_path / "missing.db", lambda _: fake_embedder)) as client:
         result = await client.call_tool("search", {"query": "x"})
 
     assert result.is_error
@@ -112,7 +112,7 @@ async def test_index_from_another_model_is_refused(
 ) -> None:
     monkeypatch.setattr(FakeEmbedder, "model_id", "other-model")
 
-    async with Client(create_server(index_file, fake_embedder)) as client:
+    async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
         result = await client.call_tool("search", {"query": "x"})
 
     assert result.is_error
@@ -121,7 +121,7 @@ async def test_index_from_another_model_is_refused(
 
 
 async def test_list_repos_counts_passages_per_kind(index_file: Path, fake_embedder: FakeEmbedder) -> None:
-    async with Client(create_server(index_file, fake_embedder)) as client:
+    async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
         result = await client.call_tool("list_repos", {})
 
     assert result.structured_content == {

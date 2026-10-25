@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict
 
 from repolore.documents import Document, DocumentKind
 
-MAX_TOKENS = 400
 CHARS_PER_TOKEN = 4
 FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 MARKDOWN = MarkdownIt("commonmark").enable("table")
@@ -49,8 +48,8 @@ def estimate_tokens(text: str) -> int:
     return -(-len(text) // CHARS_PER_TOKEN)
 
 
-def chunk_document(document: Document) -> list[Chunk]:
-    sections = split_markdown(document.body) or [Section(heading=None, text=document.title)]
+def chunk_document(document: Document, max_tokens: int | None = None) -> list[Chunk]:
+    sections = split_markdown(document.body, max_tokens) or [Section(heading=None, text=document.title)]
     return [
         Chunk(
             id=f"{document.url}::{ordinal}",
@@ -63,7 +62,8 @@ def chunk_document(document: Document) -> list[Chunk]:
     ]
 
 
-def split_markdown(text: str, max_tokens: int = MAX_TOKENS) -> list[Section]:
+def split_markdown(text: str, max_tokens: int | None = None) -> list[Section]:
+    """One section per heading; with max_tokens, a longer section is split between its blocks."""
     sections: list[Section] = []
     heading: str | None = None
     blocks: list[str] = []
@@ -91,10 +91,12 @@ def _blocks(text: str) -> Iterator[_Block]:
         yield _Block(text="\n".join(lines[start:end]).strip(), heading=heading)
 
 
-def _pack(heading: str | None, blocks: list[str], max_tokens: int) -> list[Section]:
+def _pack(heading: str | None, blocks: list[str], max_tokens: int | None) -> list[Section]:
     content = blocks[1:] if heading is not None else blocks
     if not any(content):
         return []
+    if max_tokens is None:
+        return [Section(heading, "\n\n".join(blocks))]
     sections: list[Section] = []
     current: list[str] = []
     for block in blocks:

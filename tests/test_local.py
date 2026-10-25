@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from repolore.embedding import local
-from repolore.embedding.local import LocalEmbedder
+from repolore.embedding.local import LocalEmbedder, UnknownModelError, embedder_for
 
 
 class StubModel:
@@ -42,9 +42,10 @@ def test_model_is_loaded_once_pinned_and_in_float32() -> None:
     assert StubModel.loads == [
         {
             "name": "voyageai/voyage-4-nano",
-            "revision": local.REVISION,
+            "revision": local.VOYAGE_NANO.revision,
             "trust_remote_code": True,
             "truncate_dim": 1024,
+            "prompts": None,
             "device": "cpu",
             "model_kwargs": {"dtype": torch.float32},
         }
@@ -65,7 +66,7 @@ def test_vectors_are_float32_arrays() -> None:
 
 @pytest.mark.usefixtures("stub_sentence_transformers")
 def test_model_id_names_the_pinned_revision() -> None:
-    assert LocalEmbedder().model_id == f"voyageai/voyage-4-nano@{local.REVISION[:12]}"
+    assert LocalEmbedder().model_id == f"voyageai/voyage-4-nano@{local.VOYAGE_NANO.revision[:12]}"
     assert LocalEmbedder().dim == 1024
 
 
@@ -74,3 +75,27 @@ def test_real_model_embeds_unit_vectors() -> None:
     embedder = LocalEmbedder()
 
     assert float(np.linalg.norm(embedder.embed_query("why was the release delayed?"))) == pytest.approx(1.0)
+
+
+@pytest.mark.usefixtures("stub_sentence_transformers")
+def test_bge_small_gets_its_query_instruction_and_no_remote_code() -> None:
+    LocalEmbedder(local.BGE_SMALL).embed_query("a")
+
+    load = StubModel.loads[0]
+    assert load["name"] == "BAAI/bge-small-en-v1.5"
+    assert load["trust_remote_code"] is False
+    assert load["truncate_dim"] == 384
+    assert load["prompts"] == {"query": "Represent this sentence for searching relevant passages: "}
+
+
+def test_embedder_for_matches_the_index_model_and_reuses_it() -> None:
+    embedder = embedder_for(local.BGE_SMALL.model_id)
+
+    assert embedder.model_id == "BAAI/bge-small-en-v1.5@5c38ec7c405e"
+    assert embedder.dim == 384
+    assert embedder_for(local.BGE_SMALL.model_id) is embedder
+
+
+def test_embedder_for_an_unknown_model_says_to_rebuild() -> None:
+    with pytest.raises(UnknownModelError, match="rebuild it"):
+        embedder_for("someone/else@123")
