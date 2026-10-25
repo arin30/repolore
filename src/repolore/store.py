@@ -79,6 +79,13 @@ def connect_read_only(path: Path) -> sqlite3.Connection:
 
 
 def _with_vectors(db: sqlite3.Connection) -> sqlite3.Connection:
+    # Some Python builds (python.org's macOS installer, GitHub's macOS runners) leave SQLite extension loading out.
+    if not hasattr(db, "enable_load_extension"):
+        db.close()
+        raise StoreError(
+            "This Python's sqlite3 can't load extensions, which the vector index needs. "
+            "Run repolore on a uv-managed Python: `uv python install 3.12`, then `uv sync --managed-python`."
+        )
     db.enable_load_extension(True)
     sqlite_vec.load(db)
     db.enable_load_extension(False)

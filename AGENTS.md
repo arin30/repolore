@@ -20,7 +20,9 @@ Voyage's hosted API is an option. There is no hosted service and no GitHub App.
 
 ## Commands
 
-Python 3.12 (pinned in `.python-version`), managed with uv. Code that opens files always passes
+Python 3.12 (pinned in `.python-version`), managed with uv, which always uses its own Python build
+(`python-preference = "only-managed"`): some system builds, such as python.org's on macOS, can't load the
+sqlite-vec extension. Code that opens files always passes
 `encoding="utf-8"`, because the Windows default cp1252 codec breaks on GitHub content. Don't lean on
 `PYTHONUTF8=1` instead: `uvx` users won't have it set, and CI's Windows job runs without it.
 

@@ -149,3 +149,19 @@ def test_build_settings_are_kept_beside_the_model(
         write_index(db, corpus, vectors, fake_embedder.model_id, fake_embedder.dim, {"max_tokens": "200"})
 
         assert index_settings(db) == {"max_tokens": "200", "model_id": "fake-bag-of-words", "dim": "64"}
+
+
+def test_python_without_sqlite_extensions_gets_a_clear_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class NoExtensions:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = NoExtensions()
+    monkeypatch.setattr(sqlite3, "connect", lambda *_, **__: connection)
+
+    with pytest.raises(StoreError, match="can't load extensions"):
+        connect(tmp_path / "index.db")
+
+    assert connection.closed
