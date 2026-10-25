@@ -14,19 +14,21 @@ import yaml
 from pydantic import ValidationError
 
 from repolore import __version__
-from repolore.chunking import MAX_TOKENS, Chunk, chunk_document
+from repolore.chunking import Chunk, chunk_document
 from repolore.config import Config, load_config
 from repolore.documents import Document, DocumentKind
-from repolore.embedding.local import LocalEmbedder
+from repolore.embedding.local import MODELS, LocalEmbedder, ModelName, UnknownModelError, embedder_for
 from repolore.evals.harness import METRICS, SEARCH_DEPTH, QuestionResult, evaluate, mean_top_score, recall_by_kind
 from repolore.evals.questions import QuestionKind, QuestionSet, load_questions
 from repolore.evals.runs import previous_run, run_record, save_run
 from repolore.indexing import build_index
 from repolore.ingest import ingest as ingest_repos
 from repolore.paths import AppPaths, resolve_paths
+from repolore.reranking import CrossEncoderReranker
+from repolore.retrieval import Mode
 from repolore.retrieval import search as search_index
 from repolore.sources.github import GitHubClient, GitHubError, resolve_token
-from repolore.store import EmbeddingCache, Filters, StoreError, connect, index_model, indexed_urls
+from repolore.store import EmbeddingCache, Filters, StoreError, connect, index_model, index_settings, indexed_urls
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -131,7 +133,7 @@ def _print_counts(repos: list[str], documents: list[Document]) -> None:
     typer.echo(f"{'total':<{width}}" + "".join(f"{totals[kind]:>8}" for kind in DocumentKind))
 
 
-TOKEN_BUCKETS = (50, 100, 200, MAX_TOKENS, 2 * MAX_TOKENS)
+TOKEN_BUCKETS = (50, 100, 200, 400, 800)
 BAR_WIDTH = 40
 SAMPLE_CHARS = 600
 
@@ -168,17 +170,27 @@ def _print_histogram(chunks: list[Chunk]) -> None:
 DEFAULT_INDEX = "default"
 SNIPPET_CHARS = 300
 IndexOption = Annotated[str, typer.Option("--db", help="Name of the index to use, one per pipeline config.")]
+ModeOption = Annotated[Mode, typer.Option(help="Vector (meaning), keyword (BM25) or hybrid (both, fused by rank).")]
+RerankOption = Annotated[bool, typer.Option(help="Rerank the top 50 candidates with a local cross-encoder.")]
 
 
 @app.command()
-def build(ctx: typer.Context, db: IndexOption = DEFAULT_INDEX) -> None:
+def build(
+    ctx: typer.Context,
+    db: IndexOption = DEFAULT_INDEX,
+    max_tokens: Annotated[
+        int | None, typer.Option(min=1, help="Split sections longer than this many tokens; by default they stay whole.")
+    ] = None,
+    embedder: Annotated[ModelName, typer.Option(help="Local embedding model.")] = ModelName.VOYAGE_NANO,
+) -> None:
     """Chunk the cached documents, embed what changed and write the search index."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     paths: AppPaths = ctx.obj
-    chunks = [chunk for document in _cached_documents(paths) for chunk in chunk_document(document)]
+    chunks = [chunk for document in _cached_documents(paths) for chunk in chunk_document(document, max_tokens)]
     index_file = paths.index_file(db)
     with closing(connect(index_file)) as index, closing(connect(paths.embedding_cache)) as cache:
-        stats = build_index(chunks, LocalEmbedder(), index, EmbeddingCache(cache))
+        settings = {"max_tokens": str(max_tokens or "whole")}
+        stats = build_index(chunks, LocalEmbedder(MODELS[embedder]), index, EmbeddingCache(cache), settings)
     typer.echo(
         f"{stats.chunks} chunks indexed in {index_file}, {stats.embedded} embedded, "
         f"{stats.chunks - stats.embedded} reused"
@@ -194,15 +206,19 @@ def search(
     kind: Annotated[DocumentKind | None, typer.Option(help="Only this kind of source.")] = None,
     author: Annotated[str | None, typer.Option(help="Only this author's GitHub login.")] = None,
     db: IndexOption = DEFAULT_INDEX,
+    mode: ModeOption = Mode.VECTOR,
+    rerank: RerankOption = False,
 ) -> None:
-    """Find the chunks closest in meaning to the query."""
+    """Find the chunks that best match the query."""
     paths: AppPaths = ctx.obj
     index_file = _index_or_exit(paths, db)
     filters = Filters(repo=repo, kind=kind, author=author)
     try:
         with closing(connect(index_file)) as index:
-            hits = search_index(index, LocalEmbedder(), query, k, filters)
-    except StoreError as error:
+            reranker = CrossEncoderReranker() if rerank else None
+            embedder = embedder_for(index_model(index)[0])
+            hits = search_index(index, embedder, query, k, filters, mode, reranker)
+    except (StoreError, UnknownModelError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
     if not hits:
@@ -222,6 +238,8 @@ def eval_(
     db: IndexOption = DEFAULT_INDEX,
     holdout: Annotated[bool, typer.Option(help="Score the held-out questions instead of the tuning set.")] = False,
     show_misses: Annotated[bool, typer.Option(help="List questions whose sources aren't all in the top 5.")] = False,
+    mode: ModeOption = Mode.VECTOR,
+    rerank: RerankOption = False,
     file: Annotated[
         Path | None, typer.Option(help="Question file to use instead of the one in the config dir.")
     ] = None,
@@ -232,28 +250,34 @@ def eval_(
     question_set = _questions_or_exit(questions_file)
     questions = [question for question in question_set.questions if question.holdout is holdout]
     index_file = _index_or_exit(paths, db)
-    embedder = LocalEmbedder()
     try:
         with closing(connect(index_file)) as index:
-            model_id, _ = index_model(index)
+            settings = index_settings(index)
+            embedder = embedder_for(settings["model_id"])
             missing = {source.url for q in questions for source in q.expected} - indexed_urls(index)
-            results = evaluate(questions, lambda text: search_index(index, embedder, text, SEARCH_DEPTH, Filters()))
-    except StoreError as error:
+            reranker = CrossEncoderReranker() if rerank else None
+            results = evaluate(
+                questions, lambda text: search_index(index, embedder, text, SEARCH_DEPTH, Filters(), mode, reranker)
+            )
+    except (StoreError, UnknownModelError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
     fingerprint = f"{hashlib.sha256(questions_file.read_bytes()).hexdigest()[:12]}:{'holdout' if holdout else 'tuning'}"
     config = {
         "index": db,
-        "model_id": model_id,
-        "max_tokens": MAX_TOKENS,
-        "retrieval": "vector",
+        "model_id": settings["model_id"],
+        "max_tokens": settings.get("max_tokens"),
+        "retrieval": f"{mode}+rerank" if rerank else str(mode),
         "k": SEARCH_DEPTH,
         "questions": fingerprint,
     }
     runs_dir = paths.data_dir / "evals" / "runs"
     previous = previous_run(runs_dir, fingerprint)
     run = run_record(config, results)
-    typer.echo(f"{len(questions)} {'held-out' if holdout else 'tuning'} questions on index {db} ({model_id})")
+    typer.echo(
+        f"{len(questions)} {'held-out' if holdout else 'tuning'} questions on index {db} "
+        f"({config['model_id']}, {config['retrieval']})"
+    )
     for url in sorted(missing):
         typer.echo(f"  not in the index: {url}")
     _print_metrics(run["metrics"], previous["metrics"] if previous else None)
@@ -287,7 +311,8 @@ def _print_metrics(metrics: dict[str, float], previous: dict[str, float] | None)
         value = metrics.get(name, 0.0)
         before = previous.get(name) if previous else None
         change = f"{value - before:+8.3f}" if before is not None else f"{'':>8}"
-        typer.echo(f"{name:<10} {value:9.3f} {before if before is not None else '':>9} {change}".rstrip())
+        shown = f"{before:9.3f}" if before is not None else f"{'':>9}"
+        typer.echo(f"{name:<10} {value:9.3f} {shown} {change}".rstrip())
 
 
 def _print_breakdown(results: list[QuestionResult]) -> None:

@@ -1,6 +1,6 @@
 import logging
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import batched
 
@@ -21,7 +21,11 @@ class BuildStats:
 
 
 def build_index(
-    chunks: Sequence[Chunk], embedder: Embedder, db: sqlite3.Connection, cache: EmbeddingCache
+    chunks: Sequence[Chunk],
+    embedder: Embedder,
+    db: sqlite3.Connection,
+    cache: EmbeddingCache,
+    settings: Mapping[str, str] | None = None,
 ) -> BuildStats:
     keys = [cache_key(embedder.model_id, chunk.embedded_text) for chunk in chunks]
     vectors = cache.get(set(keys))
@@ -36,7 +40,7 @@ def build_index(
         vectors.update(zip(batch_keys, embedded, strict=True))
         done += len(batch)
         log.info("embedded %d of %d chunks", done, len(pending))
-    write_index(db, chunks, _stack(vectors, keys, embedder.dim), embedder.model_id, embedder.dim)
+    write_index(db, chunks, _stack(vectors, keys, embedder.dim), embedder.model_id, embedder.dim, settings)
     return BuildStats(chunks=len(chunks), embedded=len(pending))
 
 

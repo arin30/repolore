@@ -1,6 +1,8 @@
 import io
+import json
 import shutil
 import sys
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from repolore import __version__, cli
 from repolore.cli import app
 from repolore.paths import resolve_paths
 from repolore.sources.github import GitHubClient, GitHubError
+from repolore.store import connect, index_settings
 
 runner = CliRunner()
 EXAMPLE_FILE = Path(__file__).parent.parent / "evals" / "questions.example.yaml"
@@ -156,11 +159,11 @@ def test_inspect_shows_counts_histogram_and_samples(tmp_path: Path, monkeypatch:
 
     assert result.exit_code == 0
     lines = [line.split() for line in result.output.splitlines()]
-    assert lines[0] == ["7", "documents,", "26", "chunks"]
-    assert lines[1:6] == [["pr", "6"], ["review", "0"], ["issue", "16"], ["commit", "1"], ["doc", "3"]]
+    assert lines[0] == ["7", "documents,", "24", "chunks"]
+    assert lines[1:6] == [["pr", "5"], ["review", "0"], ["issue", "15"], ["commit", "1"], ["doc", "3"]]
     assert lines[6] == ["tokens", "(estimated)"]
     assert [line[0] for line in lines[7:13]] == ["1-50", "51-100", "101-200", "201-400", "401-800", ">800"]
-    assert sum(int(line[1]) for line in lines[7:13]) == 26
+    assert sum(int(line[1]) for line in lines[7:13]) == 24
     assert result.output.count("\n--- https://github.com/ryckakas/crashcause/") == 2
 
 
@@ -187,7 +190,8 @@ def test_output_streams_that_are_not_files_are_left_alone(monkeypatch: pytest.Mo
 def cached_crashcause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     data_dir = ingest_setup(tmp_path, monkeypatch, 'repos = ["ryckakas/crashcause"]')
     shutil.copytree(FIXTURES / "crashcause", data_dir / "raw" / "ryckakas" / "crashcause")
-    monkeypatch.setattr("repolore.cli.LocalEmbedder", FakeEmbedder)
+    monkeypatch.setattr("repolore.cli.LocalEmbedder", lambda *_: FakeEmbedder())
+    monkeypatch.setattr("repolore.cli.embedder_for", lambda _: FakeEmbedder())
     return data_dir
 
 
@@ -196,9 +200,9 @@ def test_build_embeds_new_chunks_and_reuses_them_next_time(cached_crashcause: Pa
     second = runner.invoke(app, ["build", "--db", "experiment"])
 
     assert first.exit_code == 0
-    assert "26 chunks indexed in" in first.output
-    assert "26 embedded, 0 reused" in first.output
-    assert "0 embedded, 26 reused" in second.output
+    assert "24 chunks indexed in" in first.output
+    assert "24 embedded, 0 reused" in first.output
+    assert "0 embedded, 24 reused" in second.output
     assert (cached_crashcause / "db" / "experiment.db").exists()
 
 
@@ -280,7 +284,7 @@ def test_eval_scores_saves_and_lists_misses(eval_questions: Path, cached_crashca
 
     assert result.exit_code == 0, result.output
     lines = result.output.splitlines()
-    assert lines[0] == "3 tuning questions on index default (fake-bag-of-words)"
+    assert lines[0] == "3 tuning questions on index default (fake-bag-of-words, vector)"
     assert lines[1] == "  not in the index: https://github.com/ryckakas/crashcause/pull/999"
     assert lines[3].split() == ["recall@5", "0.500"]
     assert "  factual       0.500  (2)" in lines
@@ -298,7 +302,7 @@ def test_second_eval_compares_with_the_previous_run(eval_questions: Path) -> Non
     assert next(line for line in result.output.splitlines() if line.startswith("recall@5")).split() == [
         "recall@5",
         "0.500",
-        "0.5",
+        "0.500",
         "+0.000",
     ]
 
@@ -328,3 +332,21 @@ def test_eval_refuses_an_index_from_another_model(eval_questions: Path, monkeypa
 
     assert result.exit_code == 1
     assert "rebuild it" in result.output
+
+
+def test_build_with_smaller_chunks_records_the_setting(cached_crashcause: Path) -> None:
+    result = runner.invoke(app, ["build", "--db", "small", "--max-tokens", "50"])
+
+    assert result.exit_code == 0
+    assert int(result.output.split(" chunks indexed")[0]) > 26
+    with closing(connect(cached_crashcause / "db" / "small.db")) as db:
+        assert index_settings(db)["max_tokens"] == "50"
+
+
+def test_eval_records_the_index_settings(eval_questions: Path, cached_crashcause: Path) -> None:
+    runner.invoke(app, ["eval", "--file", str(eval_questions), "--mode", "hybrid"])
+
+    [run_file] = (cached_crashcause / "evals" / "runs").glob("*.json")
+    config = json.loads(run_file.read_text(encoding="utf-8"))["config"]
+    assert config["max_tokens"] == "whole"
+    assert config["retrieval"] == "hybrid"

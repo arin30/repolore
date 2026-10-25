@@ -1,6 +1,7 @@
 import hashlib
+import re
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -111,12 +112,20 @@ class EmbeddingCache:
             )
 
 
-def write_index(db: sqlite3.Connection, chunks: Sequence[Chunk], vectors: Vectors, model_id: str, dim: int) -> None:
+def write_index(
+    db: sqlite3.Connection,
+    chunks: Sequence[Chunk],
+    vectors: Vectors,
+    model_id: str,
+    dim: int,
+    settings: Mapping[str, str] | None = None,
+) -> None:
     with db:
         for table in TABLES:
             db.execute(f"drop table if exists {table}")
         db.executescript(SCHEMA.format(dim=dim))
-        db.executemany("insert into meta (key, value) values (?, ?)", [("model_id", model_id), ("dim", str(dim))])
+        meta = {**(settings or {}), "model_id": model_id, "dim": str(dim)}
+        db.executemany("insert into meta (key, value) values (?, ?)", meta.items())
         for rowid, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True), start=1):
             _insert_chunk(db, rowid, chunk, vector)
         db.execute("insert into chunks_fts (chunks_fts) values ('rebuild')")
@@ -151,16 +160,20 @@ def _insert_chunk(db: sqlite3.Connection, rowid: int, chunk: Chunk, vector: Vect
 
 
 def index_model(db: sqlite3.Connection) -> tuple[str, int]:
-    try:
-        meta = dict(db.execute("select key, value from meta").fetchall())
-    except sqlite3.OperationalError as error:
-        raise StoreError("The index is empty; run `repolore build` first.") from error
+    meta = index_settings(db)
     return meta["model_id"], int(meta["dim"])
 
 
+def index_settings(db: sqlite3.Connection) -> dict[str, str]:
+    try:
+        return dict(db.execute("select key, value from meta").fetchall())
+    except sqlite3.OperationalError as error:
+        raise StoreError("The index is empty; run `repolore build` first.") from error
+
+
 def nearest(db: sqlite3.Connection, vector: Vectors, k: int, filters: Filters) -> list[Hit]:
-    conditions = {"repo": filters.repo, "kind": filters.kind, "author": filters.author}
-    where = "".join(f" and {column} = :{column}" for column, value in conditions.items() if value is not None)
+    conditions = _conditions(filters)
+    where = "".join(f" and {column} = :{column}" for column in conditions)
     rows = db.execute(
         f"""
         with hits as (
@@ -175,6 +188,34 @@ def nearest(db: sqlite3.Connection, vector: Vectors, k: int, filters: Filters) -
         {"vector": vector.astype(np.float32).tobytes(), "k": k, **conditions},
     ).fetchall()
     return [Hit(*row[:-1], score=1 - row[-1]) for row in rows]
+
+
+def keyword_matches(db: sqlite3.Connection, query: str, k: int, filters: Filters) -> list[Hit]:
+    words = re.findall(r"\w+", query)
+    if not words:
+        return []
+    conditions = _conditions(filters)
+    where = "".join(f" and c.{column} = :{column}" for column in conditions)
+    # Each word is quoted so FTS5 never reads the user's text as query syntax; OR keeps questions from needing
+    # every word to match, and BM25 ranks the chunks matching the rarer words first.
+    terms = " OR ".join(f'"{word}"' for word in words)
+    rows = db.execute(
+        f"""
+        select c.id, c.url, c.repo, c.kind, c.title, c.section, c.author, c.created_at, c.header, c.text,
+            bm25(chunks_fts)
+        from chunks_fts join chunks c on c.rowid = chunks_fts.rowid
+        where chunks_fts match :terms{where}
+        order by bm25(chunks_fts)
+        limit :k
+        """,
+        {"terms": terms, "k": k, **conditions},
+    ).fetchall()
+    return [Hit(*row[:-1], score=-row[-1]) for row in rows]
+
+
+def _conditions(filters: Filters) -> dict[str, str]:
+    columns = {"repo": filters.repo, "kind": filters.kind, "author": filters.author}
+    return {column: value for column, value in columns.items() if value is not None}
 
 
 def indexed_urls(db: sqlite3.Connection) -> set[str]:

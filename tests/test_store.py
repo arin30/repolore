@@ -8,7 +8,18 @@ import pytest
 from conftest import FakeEmbedder
 
 from repolore.chunking import Chunk
-from repolore.store import EmbeddingCache, Filters, StoreError, cache_key, connect, index_model, nearest, write_index
+from repolore.store import (
+    EmbeddingCache,
+    Filters,
+    StoreError,
+    cache_key,
+    connect,
+    index_model,
+    index_settings,
+    keyword_matches,
+    nearest,
+    write_index,
+)
 
 
 @pytest.fixture
@@ -98,3 +109,43 @@ def test_cache_key_depends_on_model_and_text() -> None:
 
     assert len(keys) == 3
     assert cache_key("m1", "text") == cache_key("m1", "text")
+
+
+def keyword(index: sqlite3.Connection, query: str, **filters: str) -> list[str]:
+    return [hit.url for hit in keyword_matches(index, query, 10, Filters(**filters))]
+
+
+def test_keyword_search_ranks_rarer_matching_words_first(index: sqlite3.Connection) -> None:
+    hits = keyword_matches(index, "Modbus registry", 10, Filters())
+
+    assert {hit.url for hit in hits} == {
+        "https://github.com/octo/repo/issues/3",
+        "https://github.com/octo/repo/pull/1",
+        "https://github.com/octo/repo/pull/2",
+    }
+    assert hits[0].url == "https://github.com/octo/repo/issues/3"
+    assert all(hit.score > 0 for hit in hits)
+
+
+def test_keyword_search_treats_query_syntax_as_plain_words(index: sqlite3.Connection) -> None:
+    assert keyword(index, 'snake_case" OR NOT (config*') == ["https://github.com/octo/repo/blob/main/README.md"]
+
+
+@pytest.mark.parametrize("query", ["", "?!", "unmatched"])
+def test_keyword_search_without_matching_words_is_empty(index: sqlite3.Connection, query: str) -> None:
+    assert keyword(index, query) == []
+
+
+def test_keyword_search_applies_filters(index: sqlite3.Connection) -> None:
+    assert keyword(index, "registry", repo="octo/charts", author="hubot") == ["https://github.com/octo/repo/pull/2"]
+    assert keyword(index, "registry", kind="issue") == []
+
+
+def test_build_settings_are_kept_beside_the_model(
+    tmp_path: Path, corpus: list[Chunk], fake_embedder: FakeEmbedder
+) -> None:
+    with closing(connect(tmp_path / "settings.db")) as db:
+        vectors = fake_embedder.embed_documents([chunk.embedded_text for chunk in corpus])
+        write_index(db, corpus, vectors, fake_embedder.model_id, fake_embedder.dim, {"max_tokens": "200"})
+
+        assert index_settings(db) == {"max_tokens": "200", "model_id": "fake-bag-of-words", "dim": "64"}
