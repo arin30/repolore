@@ -60,12 +60,12 @@ class Document(BaseModel):
     ai_assisted: bool = False
 
 
-def documents_from(raw: RawRepo) -> list[Document]:
+def documents_from(raw: RawRepo, include_bot_reviews: bool = False) -> list[Document]:
     repo = RepoInfo.model_validate(raw.info)
     pulls = [PullRequest.model_validate(pull) for pull in raw.pulls]
     return [
         *_pull_documents(repo, pulls),
-        *_review_documents(repo, pulls),
+        *_review_documents(repo, pulls, include_bot_reviews),
         *_issue_documents(repo, (Issue.model_validate(issue) for issue in raw.issues)),
         *_commit_documents(repo, (Commit.model_validate(commit) for commit in raw.commits)),
         *_doc_documents(repo, (DocFile.model_validate(doc) for doc in raw.docs)),
@@ -108,10 +108,10 @@ def _commit_message(pull_commit: PullRequestCommit) -> tuple[str, bool]:
     return "\n\n".join(part for part in (f"### {headline}", body) if part), ai_assisted
 
 
-def _review_documents(repo: RepoInfo, pulls: Iterable[PullRequest]) -> Iterator[Document]:
+def _review_documents(repo: RepoInfo, pulls: Iterable[PullRequest], include_bots: bool) -> Iterator[Document]:
     for pull in pulls:
         for thread in pull.review_threads.nodes:
-            if thread.comments.nodes and not _is_bot(thread.comments.nodes[0].author):
+            if thread.comments.nodes and (include_bots or not _is_bot(thread.comments.nodes[0].author)):
                 yield _review_document(repo, pull, thread)
 
 
