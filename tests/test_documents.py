@@ -6,8 +6,9 @@ from typing import Any
 
 import pytest
 
-from repolore.documents import GHOST, Document, DocumentKind, Visibility, documents_from
+from repolore.documents import GHOST, Document, DocumentKind, Visibility, documents_from, plan_documents
 from repolore.sources.github import RawRepo
+from repolore.sources.plans import PlanFile
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CRASHCAUSE = RawRepo.load(FIXTURES / "crashcause")
@@ -232,3 +233,24 @@ def test_external_pull_request_carries_its_discussion() -> None:
 
     assert pull.author == "LKuemmel"
     assert "## Discussion\n\n**benderl:**" in pull.body
+
+
+def test_plans_are_private_documents_of_their_repo() -> None:
+    plan = PlanFile(path=".plans/a/plan.md", url="file:///D:/projects/repo/.plans/a/plan.md", text="# Plan")
+
+    documents = plan_documents("ryckakas/crashcause", [plan])
+
+    assert documents == [
+        Document(
+            url="file:///D:/projects/repo/.plans/a/plan.md",
+            repo="ryckakas/crashcause",
+            kind=DocumentKind.PLAN,
+            visibility=Visibility.PRIVATE,
+            title=".plans/a/plan.md",
+            body="# Plan",
+        )
+    ]
+
+
+def test_no_plans_means_no_plan_documents() -> None:
+    assert plan_documents("ryckakas/crashcause", []) == []

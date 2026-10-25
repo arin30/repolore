@@ -17,6 +17,7 @@ from repolore.sources.models import (
     RepoInfo,
     ReviewThread,
 )
+from repolore.sources.plans import PlanFile
 
 GHOST = "ghost"
 DIFF_HUNK_LINES = 15
@@ -36,6 +37,7 @@ class DocumentKind(StrEnum):
     ISSUE = "issue"
     COMMIT = "commit"
     DOC = "doc"
+    PLAN = "plan"
 
 
 class Visibility(StrEnum):
@@ -192,6 +194,21 @@ def _doc_documents(repo: RepoInfo, docs: Iterable[DocFile]) -> Iterator[Document
             title=doc.path,
             body=doc.text,
         )
+
+
+def plan_documents(repo: str, plans: Iterable[PlanFile]) -> list[Document]:
+    # Plans live in gitignored local folders, so they are private whatever the repo's visibility.
+    return [
+        Document(
+            url=plan.url,
+            repo=repo,
+            kind=DocumentKind.PLAN,
+            visibility=Visibility.PRIVATE,
+            title=plan.path,
+            body=plan.text,
+        )
+        for plan in plans
+    ]
 
 
 def _with_discussion(body: str, comments: Iterable[Comment]) -> str:

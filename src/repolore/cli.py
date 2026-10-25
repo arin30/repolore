@@ -5,7 +5,8 @@ import random
 import sys
 import tomllib
 from collections import Counter
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -16,12 +17,14 @@ from pydantic import ValidationError
 from repolore import __version__
 from repolore.chunking import Chunk, chunk_document
 from repolore.config import Config, load_config
+from repolore.discovery import discover
 from repolore.documents import Document, DocumentKind
 from repolore.embedding.local import MODELS, LocalEmbedder, ModelName, UnknownModelError, embedder_for
 from repolore.evals.harness import METRICS, SEARCH_DEPTH, QuestionResult, evaluate, mean_top_score, recall_by_kind
 from repolore.evals.questions import QuestionKind, QuestionSet, load_questions
 from repolore.evals.runs import previous_run, run_record, save_run
 from repolore.indexing import build_index
+from repolore.ingest import cached_documents
 from repolore.ingest import ingest as ingest_repos
 from repolore.paths import AppPaths, resolve_paths
 from repolore.reranking import CrossEncoderReranker
@@ -79,53 +82,70 @@ def questions(
 
 
 @app.command()
+def repos(ctx: typer.Context) -> None:
+    """List the repos ingest would fetch and why: owned, member, contributed to, or local plans only."""
+    paths: AppPaths = ctx.obj
+    config = _config_or_exit(paths.config_file)
+    with _github() as client:
+        discovery = discover(client, config)
+    width = max((len(source.name) for source in discovery.included), default=0)
+    for source in discovery.included:
+        plans = f"  + plans in {source.checkout}" if source.checkout else ""
+        typer.echo(f"{source.name:<{width}}  {source.scope:<11}{plans}".rstrip())
+    typer.echo(f"{len(discovery.included)} repos for {discovery.login}")
+    if discovery.excluded:
+        typer.echo(f"excluded by {paths.config_file}: {', '.join(source.name for source in discovery.excluded)}")
+
+
+@app.command()
 def ingest(
     ctx: typer.Context,
     offline: Annotated[bool, typer.Option(help="Rebuild documents from the raw cache without calling GitHub.")] = False,
+    full: Annotated[bool, typer.Option(help="Fetch everything again instead of only what changed.")] = False,
 ) -> None:
-    """Fetch the configured repos from GitHub into the raw cache and count the documents they yield."""
+    """Fetch the discovered repos from GitHub into the raw cache and count the documents they yield."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     paths: AppPaths = ctx.obj
-    config = _config_or_exit(paths.config_file)
-    client = None
+    if offline:
+        documents = _cached_documents(paths)
+    else:
+        config = _config_or_exit(paths.config_file)
+        with _github() as client:
+            documents = ingest_repos(discover(client, config), paths.raw_dir, client, full)
+    _print_counts(documents)
+
+
+@contextmanager
+def _github() -> Iterator[GitHubClient]:
     try:
-        client = None if offline else GitHubClient.connect(resolve_token())
-        documents = ingest_repos(config.repos, paths.raw_dir, client)
+        with closing(GitHubClient.connect(resolve_token())) as client:
+            yield client
     except GitHubError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
-    except FileNotFoundError as error:
-        typer.echo(f"No raw cache at {Path(error.filename).parent}; run `repolore ingest` without --offline.", err=True)
-        raise typer.Exit(1) from None
-    finally:
-        if client:
-            client.close()
-    _print_counts(config.repos, documents)
 
 
 def _cached_documents(paths: AppPaths) -> list[Document]:
-    config = _config_or_exit(paths.config_file)
-    try:
-        return ingest_repos(config.repos, paths.raw_dir, None)
-    except FileNotFoundError as error:
-        typer.echo(f"No raw cache at {Path(error.filename).parent}; run `repolore ingest` first.", err=True)
-        raise typer.Exit(1) from None
+    documents = cached_documents(paths.raw_dir)
+    if not documents:
+        typer.echo(f"Nothing cached in {paths.raw_dir}; run `repolore ingest` first.", err=True)
+        raise typer.Exit(1)
+    return documents
 
 
 def _config_or_exit(path: Path) -> Config:
     try:
         return load_config(path)
-    except FileNotFoundError:
-        typer.echo(f'No config at {path}. Create it with the repos to ingest: repos = ["owner/name"]', err=True)
     except (tomllib.TOMLDecodeError, ValidationError) as error:
         typer.echo(f"{path} is invalid:\n{error}", err=True)
-    raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
-def _print_counts(repos: list[str], documents: list[Document]) -> None:
+def _print_counts(documents: list[Document]) -> None:
+    repos = sorted({document.repo for document in documents}, key=str.lower)
     counts = Counter((document.repo.lower(), document.kind) for document in documents)
-    width = max(len(repo) for repo in repos)
+    width = max((len(repo) for repo in repos), default=len("total"))
     typer.echo(f"{'repo':<{width}}" + "".join(f"{kind:>8}" for kind in DocumentKind))
     for repo in repos:
         typer.echo(f"{repo:<{width}}" + "".join(f"{counts[repo.lower(), kind]:>8}" for kind in DocumentKind))

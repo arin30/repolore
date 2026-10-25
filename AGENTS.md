@@ -27,7 +27,8 @@ Python 3.12 (pinned in `.python-version`), managed with uv. Code that opens file
 ```sh
 uv sync                     # install the project and dev tools from uv.lock
 uv run repolore --help      # the CLI
-uv run repolore ingest      # fetch the repos in repolore.toml into the raw cache; --offline rebuilds from it
+uv run repolore repos       # list the discovered repos and why each is in (owned, member, contributed, local)
+uv run repolore ingest      # fetch what changed in them into the raw cache; --full refetches, --offline rereads it
 uv run repolore inspect     # chunk the cached documents: counts, token histogram, random samples
 uv run repolore build       # embed what changed and write the index (<data-dir>/db/default.db; --db names another,
                             # --max-tokens splits long sections, --embedder picks the model)
@@ -71,20 +72,32 @@ enable them once per clone with `git config core.hooksPath .githooks`. Work happ
 ## Architecture
 
 The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. Its decision log
-(D1–D25) is the reasoning behind everything below. The package grows into this layout
+(D1–D26) is the reasoning behind everything below. The package grows into this layout
 (`src/repolore/`), one module per pipeline stage:
 
 - `paths.py` resolves the per-user directories through `platformdirs`. Config is
   `%APPDATA%\repolore\repolore.toml` (roaming). Data is `%LOCALAPPDATA%\repolore` (local),
   holding the raw API cache and the DB files, and `--data-dir` overrides it. **The repo never
   contains corpus data.** It contains private code, so it stays out of git.
-- `config.py` loads `repolore.toml` (for now just `repos = ["owner/name", …]`).
-- `sources/` fetches GitHub data with a sync `httpx` client: GraphQL for PRs, issues and commits
-  (`github.graphql`), REST for the markdown tree and blobs. `models.py` types the responses. Raw
-  responses are cached as `<data-dir>/raw/<owner>/<repo>/*.json`, so chunking and embedding never
-  need the network. Local `.plans/` come later.
+- `config.py` loads `repolore.toml`: optional `include` / `exclude` globs over `owner/name` and `local_roots`.
+  Without a file, every discovered repo is in.
+- `discovery.py` decides what to ingest. Repos the viewer owns or reads as a collaborator or org member (forks
+  skipped) are fetched whole. Other people's repos found by an `involves:<login>` search are fetched only for the
+  viewer's PRs and issues; `repositoriesContributedTo` is not used, because it misses PRs the viewer only commented
+  on. Checkouts directly under `local_roots` that have a `.plans/` folder add their plans, matched to a repo by the
+  `origin` remote, and stay in as plans-only when the repo itself is gone.
+- `sources/` fetches GitHub data with a sync `httpx` client: GraphQL for PRs, issues, commits, discovery and
+  contributions (`github.graphql`), REST for the markdown tree and blobs. `models.py` types the responses. The
+  client waits for the rate limit to reset when fewer than 100 points are left, and retries a rate-limited request.
+  `plans.py` scans the local checkouts. Raw responses are cached as `<data-dir>/raw/<owner>/<repo>/*.json`, so
+  chunking and embedding never need the network.
+- `ingest.py` syncs the raw cache. A cached repo is fetched incrementally: PRs and issues newest-updated first down
+  to the newest cached `updatedAt`, commits `since` the newest cached one, markdown files only when their blob SHA
+  changed. Files gone from the tree drop out, and a repo no longer discovered or selected is deleted from the cache,
+  both logged, so `build` removes them from the index. Deleted PRs and issues, and default-branch history that was
+  rewritten or merged with older commit dates, need `ingest --full`.
 - `documents.py` normalizes into `Document`s. Bots are filtered by GraphQL `author.__typename`,
-  not by a login list. Deleted accounts become `ghost`.
+  not by a login list. Deleted accounts become `ghost`. Plans are private `plan` documents with `file://` URLs.
 - `chunking.py` splits each document's markdown at headings (markdown-it-py, top-level blocks only, so
   a code fence or table is never cut), keeps each section whole (with `max_tokens`, splits longer ones between
   blocks), and prefixes each chunk with a header like `owner/repo · PR #17 · <title> · <section>`.

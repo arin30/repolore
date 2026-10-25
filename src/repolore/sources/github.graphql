@@ -7,9 +7,46 @@ query RepoInfo($owner: String!, $name: String!) {
   }
 }
 
+query ViewerRepositories($after: String) {
+  viewer {
+    login
+    repositories(
+      first: 100
+      after: $after
+      affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+      ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+    ) {
+      pageInfo { hasNextPage endCursor }
+      nodes { nameWithOwner isFork owner { login } }
+    }
+  }
+}
+
+query InvolvedRepositories($query: String!, $after: String) {
+  search(query: $query, type: ISSUE, first: 100, after: $after) {
+    issueCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      ... on PullRequest { repository { nameWithOwner } }
+      ... on Issue { repository { nameWithOwner } }
+    }
+  }
+}
+
+query Contributions($query: String!, $after: String) {
+  search(query: $query, type: ISSUE, first: 25, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      __typename
+      ... on PullRequest { ...PRFields }
+      ... on Issue { ...IssueFields }
+    }
+  }
+}
+
 query RepoPullRequests($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(first: 25, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+    pullRequests(first: 25, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
       nodes { ...PRFields }
     }
@@ -18,31 +55,19 @@ query RepoPullRequests($owner: String!, $name: String!, $after: String) {
 
 query RepoIssues($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
-    issues(first: 50, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+    issues(first: 50, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
-      nodes {
-        number
-        title
-        body
-        url
-        state
-        createdAt
-        author { login __typename }
-        comments(first: 100) {
-          totalCount
-          nodes { author { login __typename } body createdAt }
-        }
-      }
+      nodes { ...IssueFields }
     }
   }
 }
 
-query DefaultBranchHistory($owner: String!, $name: String!, $after: String) {
+query DefaultBranchHistory($owner: String!, $name: String!, $after: String, $since: GitTimestamp) {
   repository(owner: $owner, name: $name) {
     defaultBranchRef {
       target {
         ... on Commit {
-          history(first: 100, after: $after) {
+          history(first: 100, after: $after, since: $since) {
             pageInfo { hasNextPage endCursor }
             nodes {
               oid
@@ -61,6 +86,21 @@ query DefaultBranchHistory($owner: String!, $name: String!, $after: String) {
   }
 }
 
+fragment IssueFields on Issue {
+  number
+  title
+  body
+  url
+  state
+  createdAt
+  updatedAt
+  author { login __typename }
+  comments(first: 100) {
+    totalCount
+    nodes { author { login __typename } body createdAt }
+  }
+}
+
 fragment PRFields on PullRequest {
   number
   title
@@ -68,6 +108,7 @@ fragment PRFields on PullRequest {
   url
   state
   createdAt
+  updatedAt
   author { login __typename }
   files(first: 100) {
     totalCount

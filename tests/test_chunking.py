@@ -128,6 +128,7 @@ def test_pull_request_chunks_carry_a_header_per_section() -> None:
             "octo/repo · commit 0123456 · Fix",
         ),
         (DocumentKind.DOC, "https://github.com/octo/repo/blob/main/docs/a.md", "docs/a.md", "octo/repo · docs/a.md"),
+        (DocumentKind.PLAN, "file:///D:/repo/.plans/a/plan.md", ".plans/a/plan.md", "octo/repo · .plans/a/plan.md"),
         (
             DocumentKind.REVIEW,
             "https://github.com/octo/repo/pull/1#discussion_r9",
