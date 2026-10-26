@@ -1,8 +1,9 @@
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import cache
+from functools import cache, partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -92,7 +93,8 @@ class LocalEmbedder:
 
             spec = self._spec
             # BF16 checkpoints run about 9x slower than float32 on CPUs without native BF16 math.
-            self._model = SentenceTransformer(
+            load = partial(
+                SentenceTransformer,
                 spec.name,
                 revision=spec.revision,
                 trust_remote_code=spec.trust_remote_code,
@@ -101,7 +103,19 @@ class LocalEmbedder:
                 device="cpu",
                 model_kwargs={"dtype": torch.float32},
             )
+            self._model = _from_cache_or_hub(spec, load)
         return self._model
+
+
+def _from_cache_or_hub(spec: LocalModel, load: Callable[..., "SentenceTransformer"]) -> "SentenceTransformer":
+    from huggingface_hub import try_to_load_from_cache
+
+    # A pinned revision never changes, so a cached copy is current and asking the Hub only costs requests. A cache
+    # without modules.json would quietly load as a mean-pooling model instead of failing, so it goes to the Hub.
+    if isinstance(try_to_load_from_cache(spec.name, "modules.json", revision=spec.revision), str):
+        with suppress(OSError):
+            return load(local_files_only=True)
+    return load()
 
 
 @cache

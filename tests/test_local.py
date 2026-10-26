@@ -11,9 +11,19 @@ from repolore.embedding.local import LocalEmbedder, UnknownModelError, embedder_
 
 class StubModel:
     loads: ClassVar[list[dict[str, Any]]] = []
+    cache_lookups: ClassVar[list[tuple[str, str, str]]] = []
+    modules_json_cached: ClassVar[bool] = True
+    weights_cached: ClassVar[bool] = True
 
     def __init__(self, name: str, **kwargs: Any) -> None:
         StubModel.loads.append({"name": name, **kwargs})
+        if kwargs.get("local_files_only") and not StubModel.weights_cached:
+            raise OSError("couldn't find them in the cached files")
+
+    @staticmethod
+    def try_to_load_from_cache(repo_id: str, filename: str, revision: str) -> str | None:
+        StubModel.cache_lookups.append((repo_id, filename, revision))
+        return f"/hf/{repo_id}/{revision}/{filename}" if StubModel.modules_json_cached else None
 
     def encode_document(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
         assert kwargs == {"batch_size": local.BATCH_SIZE, "normalize_embeddings": True}
@@ -27,7 +37,12 @@ class StubModel:
 @pytest.fixture
 def stub_sentence_transformers(monkeypatch: pytest.MonkeyPatch) -> None:
     StubModel.loads = []
+    StubModel.cache_lookups = []
+    StubModel.modules_json_cached = True
+    StubModel.weights_cached = True
     monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=StubModel))
+    hub = types.SimpleNamespace(try_to_load_from_cache=StubModel.try_to_load_from_cache)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
 
 
 @pytest.mark.usefixtures("stub_sentence_transformers")
@@ -48,8 +63,34 @@ def test_model_is_loaded_once_pinned_and_in_float32() -> None:
             "prompts": None,
             "device": "cpu",
             "model_kwargs": {"dtype": torch.float32},
+            "local_files_only": True,
         }
     ]
+    assert StubModel.cache_lookups == [("voyageai/voyage-4-nano", "modules.json", local.VOYAGE_NANO.revision)]
+
+
+@pytest.mark.usefixtures("stub_sentence_transformers")
+def test_a_snapshot_without_modules_json_is_loaded_from_the_hub() -> None:
+    StubModel.modules_json_cached = False
+
+    assert LocalEmbedder().embed_query("a").tolist() == [0.0, 1.0]
+
+    [only] = StubModel.loads
+    assert "local_files_only" not in only
+
+
+@pytest.mark.usefixtures("stub_sentence_transformers")
+def test_a_snapshot_missing_other_files_is_downloaded() -> None:
+    StubModel.weights_cached = False
+    embedder = LocalEmbedder()
+
+    assert embedder.embed_query("a").tolist() == [0.0, 1.0]
+    embedder.embed_query("b")
+
+    first, second = StubModel.loads
+    assert first["local_files_only"] is True
+    assert "local_files_only" not in second
+    assert {**second, "local_files_only": True} == first
 
 
 @pytest.mark.usefixtures("stub_sentence_transformers")
