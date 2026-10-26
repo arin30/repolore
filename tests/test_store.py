@@ -18,8 +18,19 @@ from repolore.store import (
     index_settings,
     keyword_matches,
     nearest,
+    repo_counts,
     write_index,
 )
+
+
+def test_repo_counts_explains_an_empty_index(tmp_path: Path) -> None:
+    with (
+        closing(connect(tmp_path / "empty.db")) as db,
+        pytest.raises(StoreError, match="The index is empty;") as error,
+    ):
+        repo_counts(db)
+
+    assert isinstance(error.value.__cause__, sqlite3.OperationalError)
 
 
 @pytest.fixture

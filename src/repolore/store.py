@@ -231,8 +231,10 @@ def indexed_urls(db: sqlite3.Connection) -> set[str]:
 
 def repo_counts(db: sqlite3.Connection) -> dict[str, dict[str, int]]:
     counts: dict[str, dict[str, int]] = {}
-    for repo, kind, count in db.execute(
-        "select repo, kind, count(*) from chunks group by repo, kind order by repo, kind"
-    ):
+    try:
+        rows = db.execute("select repo, kind, count(*) from chunks group by repo, kind order by repo, kind").fetchall()
+    except sqlite3.OperationalError as error:
+        raise StoreError("The index is empty; run `repolore build` first.") from error
+    for repo, kind, count in rows:
         counts.setdefault(repo, {})[kind] = count
     return counts
