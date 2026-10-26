@@ -1,6 +1,7 @@
 import threading
 from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
 from repolore.store import Hit
@@ -37,5 +38,10 @@ class CrossEncoderReranker:
             if self._model is None:
                 from sentence_transformers import CrossEncoder
 
-                self._model = CrossEncoder(MODEL, revision=REVISION, max_length=MAX_LENGTH, device="cpu")
+                load = partial(CrossEncoder, MODEL, revision=REVISION, max_length=MAX_LENGTH, device="cpu")
+                # A pinned revision never changes, so a cached copy is current and asking the Hub only costs requests.
+                try:
+                    self._model = load(local_files_only=True)
+                except OSError:
+                    self._model = load()
             return self._model

@@ -108,8 +108,9 @@ The plan is in `.plans/initial-build/plan.md`, which is local and gitignored. It
 - `embedding/` has the `Embedder` protocol and `LocalEmbedder` over sentence-transformers on the CPU in float32.
   The default model is `voyage-4-nano` (1024 dimensions, pinned to a reviewed revision because it runs the
   model's own code); `bge-small` is the smaller alternative. An index records its model, and `embedder_for` picks
-  the matching one for search. torch comes from PyTorch's CPU index (`[tool.uv.sources]`); PyPI's Linux wheel
-  bundles gigabytes of CUDA.
+  the matching one for search. The embedding and reranking models load from the Hugging Face cache and go to the
+  Hub only to download a pinned revision that isn't cached yet. torch comes from PyTorch's CPU index
+  (`[tool.uv.sources]`); PyPI's Linux wheel bundles gigabytes of CUDA.
 - `store.py` writes one SQLite file per index: `chunks`, a sqlite-vec `vec0` table filtered by repo,
   kind and author inside the KNN query, and an FTS5 table. `EmbeddingCache` (`<data-dir>/cache/embeddings.db`)
   keys vectors by model and chunk text, so every index reuses them and a rebuild embeds only changed chunks.
