@@ -29,7 +29,8 @@ sqlite-vec extension. Code that opens files always passes
 ```sh
 uv sync                     # install the project and dev tools from uv.lock
 uv run repolore --help      # the CLI
-uv run repolore repos       # list the discovered repos and why each is in (owned, member, contributed, local)
+uv run repolore repos       # list the discovered repos and why each is in (owned, member, contributed, local);
+                            # --excluded also lists the ones repolore.toml leaves out
 uv run repolore ingest      # fetch what changed in them into the raw cache; --full refetches, --offline rereads it
 uv run repolore inspect     # chunk the cached documents: counts, token histogram, random samples
 uv run repolore build       # embed what changed and write the index (<data-dir>/db/default.db; --db names another,

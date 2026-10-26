@@ -99,19 +99,26 @@ def questions(
 
 
 @app.command()
-def repos(ctx: typer.Context) -> None:
+def repos(
+    ctx: typer.Context,
+    excluded: Annotated[bool, typer.Option(help="Also list the repos repolore.toml excludes.")] = False,
+) -> None:
     """List the repos ingest would fetch and why: owned, member, contributed to, or local plans only."""
     paths: AppPaths = ctx.obj
     config = _config_or_exit(paths.config_file)
     with _github() as client:
         discovery = discover(client, config)
-    width = max((len(source.name) for source in discovery.included), default=0)
-    for source in discovery.included:
-        plans = f"  + plans in {source.checkout}" if source.checkout else ""
-        typer.echo(f"{source.name:<{width}}  {source.scope:<11}{plans}".rstrip())
-    typer.echo(f"{len(discovery.included)} repos for {discovery.login}")
+    rows = [(source.name, source.scope.value, source.checkout) for source in discovery.included]
+    if excluded:
+        rows += [(source.name, "excluded", None) for source in discovery.excluded]
+    width = max((len(name) for name, _, _ in rows), default=0)
+    for name, reason, checkout in rows:
+        plans = f"  + plans in {checkout}" if checkout else ""
+        typer.echo(f"{name:<{width}}  {reason:<11}{plans}".rstrip())
+    count = len(discovery.included)
+    typer.echo(f"{count} repo{'' if count == 1 else 's'} for {discovery.login}")
     if discovery.excluded:
-        typer.echo(f"excluded by {paths.config_file}: {', '.join(source.name for source in discovery.excluded)}")
+        typer.echo(f"{len(discovery.excluded)} excluded by {paths.config_file}")
 
 
 @app.command()
