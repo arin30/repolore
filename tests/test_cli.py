@@ -197,7 +197,29 @@ def test_repos_lists_each_repo_with_its_scope_and_plans(tmp_path: Path, monkeypa
     assert lines[0].split() == ["octocat/repo", "owned", "+", "plans", "in", str(checkout)]
     assert lines[1].split() == ["other/project", "contributed"]
     assert lines[2] == "2 repos for octocat"
-    assert lines[3].endswith("repolore.toml: octocat/demo, octocat/old")
+    assert lines[3].startswith("2 excluded by ")
+    assert lines[3].endswith("repolore.toml")
+    assert len(lines) == 4
+
+
+def test_repos_lists_the_excluded_repos_on_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    discovery = Discovery(
+        login="octocat",
+        included=[RepoSource("octocat/repo", Scope.OWNED)],
+        excluded=[RepoSource("octocat/a-much-longer-name", Scope.MEMBER, tmp_path / "checkout")],
+    )
+    ingest_setup(tmp_path, monkeypatch)
+    online(monkeypatch, discovery)
+
+    result = runner.invoke(app, ["repos", "--excluded"])
+
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    assert lines[0] == f"{'octocat/repo':<26}  owned"
+    assert lines[1] == "octocat/a-much-longer-name  excluded"
+    assert lines[2] == "1 repo for octocat"
+    assert lines[3].startswith("1 excluded by ")
+    assert len(lines) == 4
 
 
 def test_repos_without_a_config_uses_the_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
