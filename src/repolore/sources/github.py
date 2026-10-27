@@ -273,11 +273,14 @@ def _merge(cached: list[Json], fresh: list[Json], key: str) -> list[Json]:
 
 
 def _warn_about_truncation(repo: str, pulls: list[Json]) -> None:
+    summaries: dict[tuple[str, int], int] = {}
     for pull in pulls:
         for key in INNER_CONNECTIONS:
             connection = pull[key]
             if connection["totalCount"] > len(connection["nodes"]):
-                log.warning(
+                level = logging.WARNING if key in ("comments", "reviewThreads") else logging.DEBUG
+                log.log(
+                    level,
                     "%s#%s: only %d of %d %s fetched",
                     repo,
                     pull["number"],
@@ -285,6 +288,11 @@ def _warn_about_truncation(repo: str, pulls: list[Json]) -> None:
                     connection["totalCount"],
                     key,
                 )
+                if level == logging.DEBUG:
+                    group = (key, len(connection["nodes"]))
+                    summaries[group] = summaries.get(group, 0) + 1
+    for (key, fetched), count in summaries.items():
+        log.info("%s: %d PRs list only their first %d %s", repo, count, fetched, key)
 
 
 def _fetch_docs(client: GitHubClient, repo: str, branch: str, cached: list[Json]) -> list[Json]:
