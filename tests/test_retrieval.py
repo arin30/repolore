@@ -1,11 +1,13 @@
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from conftest import FakeEmbedder
 
+from repolore import retrieval
 from repolore.chunking import Chunk
 from repolore.retrieval import RRF_K, Mode, fuse, search
 from repolore.store import Filters, Hit, StoreError, connect, write_index
@@ -72,6 +74,23 @@ def test_reranker_reorders_a_deeper_candidate_list(index: sqlite3.Connection, fa
     assert reranker.seen == 4
     assert len(hits) == 1
     assert hits[0].url != search(index, fake_embedder, "registry", 1, Filters())[0].url
+
+
+def test_distinct_returns_highest_ranked_chunk_per_url(
+    index: sqlite3.Connection, fake_embedder: FakeEmbedder, corpus: list[Chunk], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = (hit_for(chunk) for chunk in corpus[:2])
+    duplicate = replace(first, chunk_id="other-section", section="Other")
+    depths = []
+
+    def candidates(db, embedder, query, depth, filters, mode):
+        depths.append(depth)
+        return [first, duplicate, second][:depth]
+
+    monkeypatch.setattr(retrieval, "_candidates", candidates)
+    assert search(index, fake_embedder, "query", 2, Filters(), distinct=True) == [first, second]
+    assert depths == [retrieval.CANDIDATES]
+    assert search(index, fake_embedder, "query", 2, Filters()) == [first, duplicate]
 
 
 class ReverseReranker:
