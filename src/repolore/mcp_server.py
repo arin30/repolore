@@ -14,6 +14,7 @@ from repolore.documents import DocumentKind
 from repolore.embedding import Embedder
 from repolore.embedding.local import UnknownModelError, embedder_for
 from repolore.paths import resolve_paths
+from repolore.retrieval import Mode
 from repolore.retrieval import search as search_index
 from repolore.store import Filters, Hit, StoreError, connect_read_only, index_model, repo_counts
 
@@ -64,12 +65,15 @@ def create_server(index_file: Path, embedder_for: Callable[[str], Embedder]) -> 
         kind: Annotated[DocumentKind | None, Field(description="Only this kind of source.")] = None,
         author: Annotated[str | None, Field(description="Only this author's GitHub login.")] = None,
         k: Annotated[int, Field(ge=1, le=25, description="How many passages to return.")] = 8,
+        mode: Annotated[
+            Mode, Field(description="Search mode: use keyword for exact identifiers, ticket IDs or error messages.")
+        ] = Mode.VECTOR,
     ) -> SearchResults:
         """Find the passages closest in meaning to the query, best first, with permalinks."""
         with _open(index_file) as db:
             try:
                 embedder = embedder_for(index_model(db)[0])
-                hits = search_index(db, embedder, query, k, Filters(repo=repo, kind=kind, author=author))
+                hits = search_index(db, embedder, query, k, Filters(repo=repo, kind=kind, author=author), mode)
             except (StoreError, UnknownModelError) as error:
                 raise ToolError(str(error)) from error
         return SearchResults(query=query, results=[_result(hit) for hit in hits])
