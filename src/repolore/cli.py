@@ -238,11 +238,27 @@ def build(
     index_file = paths.index_file(db)
     with closing(connect(index_file)) as index, closing(connect(paths.embedding_cache)) as cache:
         settings = {"max_tokens": str(max_tokens or "whole"), "bot_reviews": "included" if bot_reviews else "excluded"}
-        stats = build_index(chunks, LocalEmbedder(MODELS[embedder]), index, EmbeddingCache(cache), settings)
+        model = LocalEmbedder(MODELS[embedder])
+        _warn_changed_settings(index, settings | {"model_id": model.model_id})
+        stats = build_index(chunks, model, index, EmbeddingCache(cache), settings)
     typer.echo(
         f"{stats.chunks} chunks indexed in {index_file}, {stats.embedded} embedded, "
         f"{stats.chunks - stats.embedded} reused"
     )
+
+
+def _warn_changed_settings(index, settings: dict[str, str]) -> None:
+    try:
+        previous = index_settings(index)
+    except StoreError:
+        return
+    changes = [
+        f"{key}: {previous[key]} -> {value}"
+        for key, value in settings.items()
+        if key in previous and previous[key] != value
+    ]
+    if changes:
+        typer.echo("Warning: build settings changed (" + ", ".join(changes) + "); chunks may be re-embedded.", err=True)
 
 
 @app.command()

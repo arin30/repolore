@@ -449,6 +449,31 @@ def test_build_with_bot_reviews_records_the_setting(cached_crashcause: Path) -> 
         assert index_settings(db)["bot_reviews"] == "included"
 
 
+def test_rebuild_warns_when_recorded_settings_change(cached_crashcause: Path) -> None:
+    first = runner.invoke(app, ["build", "--db", "changes", "--max-tokens", "50", "--bot-reviews"])
+    assert first.exit_code == 0
+    assert "Warning: build settings changed" not in first.output
+
+    unchanged = runner.invoke(app, ["build", "--db", "changes", "--max-tokens", "50", "--bot-reviews"])
+    assert unchanged.exit_code == 0
+    assert "Warning: build settings changed" not in unchanged.output
+
+    changed = runner.invoke(app, ["build", "--db", "changes"])
+    assert changed.exit_code == 0
+    assert "max_tokens: 50 -> whole" in changed.output
+    assert "bot_reviews: included -> excluded" in changed.output
+    assert "chunks may be re-embedded" in changed.output
+
+
+def test_build_warns_when_embedding_model_changes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with closing(connect(tmp_path / "index.db")) as db:
+        db.execute("create table meta (key text, value text)")
+        db.execute("insert into meta values (?, ?)", ("model_id", "old-model"))
+        cli._warn_changed_settings(db, {"model_id": "new-model"})
+
+    assert "model_id: old-model -> new-model" in capsys.readouterr().err
+
+
 def test_eval_records_the_index_settings(eval_questions: Path, cached_crashcause: Path) -> None:
     runner.invoke(app, ["eval", "--file", str(eval_questions), "--mode", "hybrid"])
 
