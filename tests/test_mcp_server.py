@@ -39,25 +39,25 @@ async def test_tools_are_listed_as_read_only(index_file: Path, fake_embedder: Fa
     assert set(tools["search"].input_schema["properties"]) == {"query", "repo", "kind", "author", "k", "mode"}
 
 
-@pytest.mark.parametrize("mode", ["vector", "keyword", "hybrid"])
+@pytest.mark.parametrize("mode", [None, "vector", "keyword", "hybrid"])
 async def test_search_modes(
-    index_file: Path, fake_embedder: FakeEmbedder, mode: str, monkeypatch: pytest.MonkeyPatch
+    index_file: Path, fake_embedder: FakeEmbedder, mode: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     original_search = mcp_server.search_index
     seen = []
 
-    def record_mode(*args):
-        seen.append(args[-1])
-        return original_search(*args)
+    def record_mode(db, embedder, query, k, filters, mode=mcp_server.Mode.VECTOR, reranker=None):
+        seen.append(mode)
+        return original_search(db, embedder, query, k, filters, mode, reranker)
 
     monkeypatch.setattr(mcp_server, "search_index", record_mode)
     async with Client(create_server(index_file, lambda _: fake_embedder)) as client:
-        result = await client.call_tool("search", {"query": "registry", "mode": mode})
+        result = await client.call_tool("search", {"query": "registry", **({"mode": mode} if mode else {})})
 
     assert not result.is_error
     assert result.structured_content is not None
     assert result.structured_content["results"]
-    assert seen == [mcp_server.Mode(mode)]
+    assert seen == [mcp_server.Mode(mode) if mode else mcp_server.Mode.VECTOR]
 
 
 async def test_search_rejects_unknown_mode(index_file: Path, fake_embedder: FakeEmbedder) -> None:
