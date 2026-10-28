@@ -1,14 +1,12 @@
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import closing
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from conftest import FakeEmbedder
+from conftest import DocumentFactory, FakeEmbedder
 
-from repolore import retrieval
-from repolore.chunking import Chunk
+from repolore.chunking import Chunk, chunk_document
 from repolore.retrieval import RRF_K, Mode, fuse, search
 from repolore.store import Filters, Hit, StoreError, connect, write_index
 
@@ -76,21 +74,45 @@ def test_reranker_reorders_a_deeper_candidate_list(index: sqlite3.Connection, fa
     assert hits[0].url != search(index, fake_embedder, "registry", 1, Filters())[0].url
 
 
+@pytest.fixture
+def section_index(
+    index: sqlite3.Connection, corpus: list[Chunk], fake_embedder: FakeEmbedder, make_document: DocumentFactory
+) -> sqlite3.Connection:
+    doc = make_document(9, "## Retry\nregistry backoff\n\n## Timeout\nregistry backoff timeout")
+    chunks = corpus[2:3] + list(chunk_document(doc))
+    write_index(
+        index,
+        chunks,
+        fake_embedder.embed_documents([c.embedded_text for c in chunks]),
+        fake_embedder.model_id,
+        fake_embedder.dim,
+    )
+    return index
+
+
 def test_distinct_returns_highest_ranked_chunk_per_url(
-    index: sqlite3.Connection, fake_embedder: FakeEmbedder, corpus: list[Chunk], monkeypatch: pytest.MonkeyPatch
+    section_index: sqlite3.Connection, fake_embedder: FakeEmbedder
 ) -> None:
-    first, second = (hit_for(chunk) for chunk in corpus[:2])
-    duplicate = replace(first, chunk_id="other-section", section="Other")
-    depths = []
+    hits = search(section_index, fake_embedder, "registry backoff", 2, Filters(), distinct=True)
+    assert len(hits) == 2
+    assert len({hit.url for hit in hits}) == 2
 
-    def candidates(db, embedder, query, depth, filters, mode):
-        depths.append(depth)
-        return [first, duplicate, second][:depth]
 
-    monkeypatch.setattr(retrieval, "_candidates", candidates)
-    assert search(index, fake_embedder, "query", 2, Filters(), distinct=True) == [first, second]
-    assert depths == [retrieval.CANDIDATES]
-    assert search(index, fake_embedder, "query", 2, Filters()) == [first, duplicate]
+def test_default_search_keeps_multiple_sections(section_index: sqlite3.Connection, fake_embedder: FakeEmbedder) -> None:
+    hits = search(section_index, fake_embedder, "registry backoff", 6, Filters())
+    assert sum(hit.url.endswith("/9") for hit in hits) == 2
+
+
+def test_distinct_keeps_the_rerankers_best_section(
+    section_index: sqlite3.Connection, fake_embedder: FakeEmbedder
+) -> None:
+    original = search(section_index, fake_embedder, "registry backoff", 6, Filters())
+    sections = [hit for hit in original if hit.url.endswith("/9")]
+    assert len(sections) == 2
+    hits = search(
+        section_index, fake_embedder, "registry backoff", 6, Filters(), reranker=ReverseReranker(), distinct=True
+    )
+    assert [hit.chunk_id for hit in hits if hit.url.endswith("/9")] == [sections[-1].chunk_id]
 
 
 class ReverseReranker:
