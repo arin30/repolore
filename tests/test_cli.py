@@ -465,13 +465,12 @@ def test_rebuild_warns_when_recorded_settings_change(cached_crashcause: Path) ->
     assert "chunks may be re-embedded" in changed.output
 
 
-def test_build_warns_when_embedding_model_changes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    with closing(connect(tmp_path / "index.db")) as db:
-        db.execute("create table meta (key text, value text)")
-        db.execute("insert into meta values (?, ?)", ("model_id", "old-model"))
-        cli._warn_changed_settings(db, {"model_id": "new-model"})
-
-    assert "model_id: old-model -> new-model" in capsys.readouterr().err
+def test_build_warns_when_embedding_model_changes(cached_crashcause: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner.invoke(app, ["build", "--db", "model"])
+    monkeypatch.setattr(FakeEmbedder, "model_id", "other-model")
+    result = runner.invoke(app, ["build", "--db", "model"])
+    assert result.exit_code == 0
+    assert "model_id: fake-bag-of-words -> other-model" in result.output
 
 
 def test_eval_records_the_index_settings(eval_questions: Path, cached_crashcause: Path) -> None:
