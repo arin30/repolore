@@ -82,7 +82,7 @@ def create_server(index_file: Path, embedder_for: Callable[[str], Embedder]) -> 
                 counts = repo_counts(db)
             except StoreError as error:
                 raise ToolError(str(error)) from error
-            return Repos(repos=[Repo(repo=repo, chunks=chunks) for repo, chunks in counts.items()])
+        return Repos(repos=[Repo(repo=repo, chunks=chunks) for repo, chunks in counts.items()])
 
     return server
 

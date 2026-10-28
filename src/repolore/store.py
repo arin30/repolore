@@ -43,6 +43,9 @@ TABLES = ("meta", "chunks", "chunks_vec", "chunks_fts")
 NO_AUTHOR = ""
 
 
+EMPTY_INDEX = "The index is empty; run `repolore build` first."
+
+
 class StoreError(Exception):
     pass
 
@@ -175,7 +178,7 @@ def index_settings(db: sqlite3.Connection) -> dict[str, str]:
     try:
         return dict(db.execute("select key, value from meta").fetchall())
     except sqlite3.OperationalError as error:
-        raise StoreError("The index is empty; run `repolore build` first.") from error
+        raise StoreError(EMPTY_INDEX) from error
 
 
 def nearest(db: sqlite3.Connection, vector: Vectors, k: int, filters: Filters) -> list[Hit]:
@@ -234,7 +237,7 @@ def repo_counts(db: sqlite3.Connection) -> dict[str, dict[str, int]]:
     try:
         rows = db.execute("select repo, kind, count(*) from chunks group by repo, kind order by repo, kind").fetchall()
     except sqlite3.OperationalError as error:
-        raise StoreError("The index is empty; run `repolore build` first.") from error
+        raise StoreError(EMPTY_INDEX) from error
     for repo, kind, count in rows:
         counts.setdefault(repo, {})[kind] = count
     return counts

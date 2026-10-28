@@ -23,16 +23,6 @@ from repolore.store import (
 )
 
 
-def test_repo_counts_explains_an_empty_index(tmp_path: Path) -> None:
-    with (
-        closing(connect(tmp_path / "empty.db")) as db,
-        pytest.raises(StoreError, match="The index is empty;") as error,
-    ):
-        repo_counts(db)
-
-    assert isinstance(error.value.__cause__, sqlite3.OperationalError)
-
-
 @pytest.fixture
 def index(tmp_path: Path, corpus: list[Chunk], fake_embedder: FakeEmbedder) -> Iterator[sqlite3.Connection]:
     with closing(connect(tmp_path / "db" / "test.db")) as db:
@@ -85,6 +75,16 @@ def test_index_records_its_model(index: sqlite3.Connection) -> None:
 def test_empty_database_has_no_model(tmp_path: Path) -> None:
     with closing(connect(tmp_path / "empty.db")) as db, pytest.raises(StoreError, match="run `repolore build` first"):
         index_model(db)
+
+
+def test_repo_counts_explains_an_empty_index(tmp_path: Path) -> None:
+    with (
+        closing(connect(tmp_path / "empty.db")) as db,
+        pytest.raises(StoreError, match="The index is empty;") as error,
+    ):
+        repo_counts(db)
+
+    assert isinstance(error.value.__cause__, sqlite3.OperationalError)
 
 
 def test_rewriting_replaces_the_previous_index(
