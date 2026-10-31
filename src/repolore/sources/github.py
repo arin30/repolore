@@ -17,6 +17,7 @@ API_URL = "https://api.github.com"
 TOKEN_ENV = "REPOLORE_GITHUB_TOKEN"
 QUERIES = files("repolore.sources").joinpath("github.graphql").read_text(encoding="utf-8")
 INNER_CONNECTIONS = ("files", "commits", "comments", "reviews", "reviewThreads")
+DISCUSSION_CONNECTIONS = ("comments", "reviewThreads")
 SKIPPED_DIRS = frozenset({"node_modules", "vendor"})
 SYMLINK_MODE = "120000"
 RATE_LIMIT_FLOOR = 100
@@ -277,24 +278,16 @@ def _log_truncation(repo: str, pulls: list[Json]) -> None:
     summaries: Counter[tuple[str, int]] = Counter()
     for pull in pulls:
         for key in INNER_CONNECTIONS:
-            connection = pull[key]
-            if connection["totalCount"] > len(connection["nodes"]):
-                discussion = key in ("comments", "reviewThreads")
-                level = logging.WARNING if discussion else logging.DEBUG
-                log.log(
-                    level,
-                    "%s#%s: only %d of %d %s fetched",
-                    repo,
-                    pull["number"],
-                    len(connection["nodes"]),
-                    connection["totalCount"],
-                    key,
-                )
-                if not discussion:
-                    group = (key, len(connection["nodes"]))
-                    summaries[group] += 1
+            fetched, total = len(pull[key]["nodes"]), pull[key]["totalCount"]
+            if total <= fetched:
+                continue
+            if key in DISCUSSION_CONNECTIONS:
+                log.warning("%s#%s: only %d of %d %s fetched", repo, pull["number"], fetched, total, key)
+            else:
+                log.debug("%s#%s: only %d of %d %s fetched", repo, pull["number"], fetched, total, key)
+                summaries[key, fetched] += 1
     for (key, fetched), count in summaries.items():
-        log.info("%s: %s truncated to the first %d on %d PRs", repo, key, fetched, count)
+        log.info("%s: %s truncated to the first %d (PRs affected: %d)", repo, key, fetched, count)
 
 
 def _fetch_docs(client: GitHubClient, repo: str, branch: str, cached: list[Json]) -> list[Json]:

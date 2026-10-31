@@ -224,7 +224,7 @@ def test_truncated_inner_connection_is_logged(caplog: pytest.LogCaptureFixture) 
         fetch_repo(client_for(fake.handle), "octo/repo")
 
     assert "octo/repo#4: only 0 of 120 files fetched" in caplog.text
-    assert ("octo/repo: files truncated to the first 0 on 2 PRs", logging.INFO) in [
+    assert ("octo/repo: files truncated to the first 0 (PRs affected: 2)", logging.INFO) in [
         (record.message, record.levelno) for record in caplog.records
     ]
     warnings = [record.message for record in caplog.records if record.levelno == logging.WARNING]
